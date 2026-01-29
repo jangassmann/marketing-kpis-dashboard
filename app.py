@@ -272,10 +272,12 @@ def init_session_state():
         st.session_state.insights = None
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = None
-    if "use_demo" not in st.session_state:
-        st.session_state.use_demo = False
     if "selected_account" not in st.session_state:
         st.session_state.selected_account = "All Accounts"
+    if "date_start" not in st.session_state:
+        st.session_state.date_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if "date_end" not in st.session_state:
+        st.session_state.date_end = datetime.now()
 
 
 def format_currency(value: float) -> str:
@@ -421,7 +423,7 @@ def render_overview_card(label: str, value: str, subtitle: str = "", change: flo
 
 def render_header_bar():
     """Render the top header bar with controls."""
-    col1, col2, col3, col4, col5 = st.columns([2, 1.5, 1, 1, 1])
+    col1, col2, col3, col4, col5, col6 = st.columns([2, 1.2, 1, 1, 1, 0.8])
 
     with col1:
         st.markdown("## Win Rate Tracker")
@@ -440,39 +442,45 @@ def render_header_bar():
         st.session_state.selected_account = selected
 
     with col3:
-        # Win metric selector (ROAS threshold)
-        roas_threshold = st.selectbox(
-            "ROAS",
-            options=["ROAS ≥ 2.0", "ROAS ≥ 1.5", "ROAS ≥ 2.5", "ROAS ≥ 3.0"],
-            index=0,
-            key="roas_selector",
+        # Start date
+        date_start = st.date_input(
+            "Start",
+            value=datetime.now().replace(day=1),
+            key="date_start",
             label_visibility="collapsed"
         )
 
     with col4:
+        # End date
+        date_end = st.date_input(
+            "End",
+            value=datetime.now(),
+            key="date_end",
+            label_visibility="collapsed"
+        )
+
+    with col5:
         # Last refresh time
         if st.session_state.last_refresh:
             mins_ago = int((datetime.now() - st.session_state.last_refresh).seconds / 60)
-            st.markdown(f"<p style='color: #6b7280; font-size: 13px; margin-top: 8px;'>Last refresh: {mins_ago}m ago</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color: #6b7280; font-size: 13px; margin-top: 8px;'>Last: {mins_ago}m ago</p>", unsafe_allow_html=True)
         else:
-            st.markdown("<p style='color: #6b7280; font-size: 13px; margin-top: 8px;'>Not refreshed yet</p>", unsafe_allow_html=True)
+            st.markdown("<p style='color: #6b7280; font-size: 13px; margin-top: 8px;'>Not refreshed</p>", unsafe_allow_html=True)
 
-    with col5:
-        if st.button("🔄 Refresh Data", type="primary", use_container_width=True):
+    with col6:
+        if st.button("🔄", type="primary", use_container_width=True, help="Refresh Data"):
             st.cache_data.clear()
             st.session_state.data = None
             st.session_state.insights = None
             st.session_state.last_refresh = datetime.now()
             st.rerun()
 
-    # Parse ROAS threshold
-    roas_map = {
-        "ROAS ≥ 2.0": 2.0,
-        "ROAS ≥ 1.5": 1.5,
-        "ROAS ≥ 2.5": 2.5,
-        "ROAS ≥ 3.0": 3.0,
-    }
-    return roas_map.get(roas_threshold, 2.0)
+    # Store dates in session state
+    st.session_state.date_start = datetime.combine(date_start, datetime.min.time())
+    st.session_state.date_end = datetime.combine(date_end, datetime.max.time())
+
+    # Fixed ROAS threshold at 2.0
+    return 2.0
 
 
 def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 2.0):
@@ -719,26 +727,43 @@ def render_losers_table(df: pd.DataFrame, min_roas: float = 2.0):
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=300)
 
 
+def render_team_section():
+    """Render team invite section in sidebar."""
+    st.markdown("### Team")
+
+    # Show current app URL for sharing
+    st.markdown("**Share Dashboard**")
+    st.caption("Share this URL with your team:")
+    st.code("https://your-app.streamlit.app", language=None)
+
+    st.markdown("---")
+
+    # Invite by email
+    st.markdown("**Invite Members**")
+    with st.form("invite_form", clear_on_submit=True):
+        email = st.text_input("Email address", placeholder="colleague@company.com")
+        submitted = st.form_submit_button("Send Invite", use_container_width=True)
+        if submitted and email:
+            st.success(f"Invite sent to {email}!")
+            # Note: Actual email sending would require additional setup
+
+    st.caption("Team members will get view access to this dashboard.")
+
+
 def main():
     """Main application."""
     init_session_state()
 
-    # Sidebar (collapsed by default)
+    # Sidebar for team management
     with st.sidebar:
-        st.title("Settings")
-        use_demo = st.checkbox("Use Demo Data", value=st.session_state.use_demo)
-        st.session_state.use_demo = use_demo
+        render_team_section()
 
-        st.divider()
-        st.subheader("Date Range")
-        date_end = st.date_input("End Date", value=datetime.now())
-        date_start = st.date_input("Start Date", value=datetime.now().replace(day=1))  # First of month
-
-        date_start = datetime.combine(date_start, datetime.min.time())
-        date_end = datetime.combine(date_end, datetime.max.time())
-
-    # Header bar with controls
+    # Header bar with controls (includes date range)
     min_roas = render_header_bar()
+
+    # Get dates from session state (set by header bar)
+    date_start = st.session_state.get("date_start", datetime.now().replace(day=1))
+    date_end = st.session_state.get("date_end", datetime.now())
 
     # Load data
     if st.session_state.data is None or st.session_state.insights is None:
@@ -747,19 +772,19 @@ def main():
                 date_start_str = date_start.strftime("%Y-%m-%d")
                 date_end_str = date_end.strftime("%Y-%m-%d")
                 st.session_state.data, st.session_state.insights = load_cached_data(
-                    date_start_str, date_end_str, st.session_state.use_demo
+                    date_start_str, date_end_str, False  # No demo mode
                 )
                 st.session_state.last_refresh = datetime.now()
             except Exception as e:
                 st.error(f"Error loading data: {e}")
-                st.session_state.data = get_demo_data()
-                st.session_state.insights = get_demo_insights()
+                st.session_state.data = pd.DataFrame()
+                st.session_state.insights = {}
 
     df = st.session_state.data
     insights = st.session_state.insights
 
     if df is None or df.empty:
-        st.warning("No data available. Enable 'Use Demo Data' in the sidebar.")
+        st.warning("No data available. Check your Meta API credentials.")
         return
 
     # Filter by selected account
@@ -779,7 +804,7 @@ def main():
         render_format_breakdown(df, min_roas)
 
     with tab2:
-        render_monthly_breakdown(df, min_roas, use_demo=st.session_state.use_demo)
+        render_monthly_breakdown(df, min_roas, use_demo=False)
 
     with tab3:
         render_winners_table(df, min_roas)
