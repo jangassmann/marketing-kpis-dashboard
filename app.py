@@ -577,23 +577,11 @@ def render_video_hooks_tab(df: pd.DataFrame):
         st.info("No video creatives found")
         return
 
-    # Ensure video metric columns exist with fallbacks
-    if "video_3s_views" not in videos_df.columns:
-        videos_df["video_3s_views"] = videos_df["impressions"] * 0.25
-    if "video_plays" not in videos_df.columns:
-        videos_df["video_plays"] = videos_df["impressions"] * 0.4
-    if "video_p25" not in videos_df.columns:
-        videos_df["video_p25"] = videos_df["impressions"] * 0.2
-    if "video_p50" not in videos_df.columns:
-        videos_df["video_p50"] = videos_df["impressions"] * 0.15
-    if "video_p75" not in videos_df.columns:
-        videos_df["video_p75"] = videos_df["impressions"] * 0.1
-    if "video_p100" not in videos_df.columns:
-        videos_df["video_p100"] = videos_df["impressions"] * 0.05
-    if "video_thruplay" not in videos_df.columns:
-        videos_df["video_thruplay"] = videos_df["impressions"] * 0.12
-    if "video_avg_time" not in videos_df.columns:
-        videos_df["video_avg_time"] = 10.0
+    # Ensure video metric columns exist - NO fallbacks, show real data only
+    for col in ["video_3s_views", "video_plays", "video_p25", "video_p50",
+                "video_p75", "video_p100", "video_thruplay", "video_avg_time"]:
+        if col not in videos_df.columns:
+            videos_df[col] = 0
 
     # Calculate video metrics
     # Hook Rate = video plays / impressions (how many started watching)
@@ -659,6 +647,11 @@ def render_video_hooks_tab(df: pd.DataFrame):
     display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
 
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+    # Show data availability info
+    has_video_data = videos_df["video_plays"].sum() > 0 or videos_df["video_3s_views"].sum() > 0
+    if not has_video_data:
+        st.warning("Video engagement metrics (plays, 3s views, etc.) are not available from Meta API for these ads. This can happen if the ads don't have video content or if the metrics aren't tracked.")
 
     # Add metric explanations
     with st.expander("Metric Definitions"):

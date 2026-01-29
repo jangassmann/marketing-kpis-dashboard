@@ -352,12 +352,18 @@ class MetaAdsClient:
                 if video_play_actions:
                     video_plays = int(video_play_actions[0].get("value", 0))
 
-                # 3-second views (Thumbstop)
+                # 3-second views (Thumbstop) - can be "video_view" or in video_play_actions
                 video_3s_views = 0
                 for action in ad_data.get("actions", []):
-                    if action.get("action_type") == "video_view":
+                    action_type = action.get("action_type", "")
+                    # Try multiple possible action types for 3-second views
+                    if action_type in ["video_view", "video_play", "video_avg_time_watched"]:
                         video_3s_views = int(action.get("value", 0))
                         break
+
+                # If no 3s views found, try using video_plays as fallback
+                if video_3s_views == 0 and video_plays > 0:
+                    video_3s_views = video_plays
 
                 # Video completion percentages
                 video_p25 = 0
