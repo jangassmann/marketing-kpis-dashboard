@@ -443,19 +443,19 @@ def render_header_bar():
 
     with col3:
         # Start date
-        date_start = st.date_input(
+        start_date = st.date_input(
             "Start",
             value=datetime.now().replace(day=1),
-            key="date_start",
+            key="start_date_input",
             label_visibility="collapsed"
         )
 
     with col4:
         # End date
-        date_end = st.date_input(
+        end_date = st.date_input(
             "End",
             value=datetime.now(),
-            key="date_end",
+            key="end_date_input",
             label_visibility="collapsed"
         )
 
@@ -476,8 +476,8 @@ def render_header_bar():
             st.rerun()
 
     # Store dates in session state
-    st.session_state.date_start = datetime.combine(date_start, datetime.min.time())
-    st.session_state.date_end = datetime.combine(date_end, datetime.max.time())
+    st.session_state.date_start = datetime.combine(start_date, datetime.min.time())
+    st.session_state.date_end = datetime.combine(end_date, datetime.max.time())
 
     # Fixed ROAS threshold at 2.0
     return 2.0
