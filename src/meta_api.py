@@ -291,6 +291,14 @@ class MetaAdsClient:
                     "action_values",
                     "purchase_roas",
                     "cost_per_action_type",
+                    # Video metrics
+                    "video_play_actions",
+                    "video_p25_watched_actions",
+                    "video_p50_watched_actions",
+                    "video_p75_watched_actions",
+                    "video_p100_watched_actions",
+                    "video_avg_time_watched_actions",
+                    "video_thruplay_watched_actions",
                 ],
                 params={
                     "time_range": time_range,
@@ -338,6 +346,51 @@ class MetaAdsClient:
                         cpa = float(cpa_data.get("value", 0))
                         break
 
+                # Video metrics
+                video_plays = 0
+                video_play_actions = ad_data.get("video_play_actions", [])
+                if video_play_actions:
+                    video_plays = int(video_play_actions[0].get("value", 0))
+
+                # 3-second views (Thumbstop)
+                video_3s_views = 0
+                for action in ad_data.get("actions", []):
+                    if action.get("action_type") == "video_view":
+                        video_3s_views = int(action.get("value", 0))
+                        break
+
+                # Video completion percentages
+                video_p25 = 0
+                video_p50 = 0
+                video_p75 = 0
+                video_p100 = 0
+                video_thruplay = 0
+                video_avg_time = 0
+
+                p25_actions = ad_data.get("video_p25_watched_actions", [])
+                if p25_actions:
+                    video_p25 = int(p25_actions[0].get("value", 0))
+
+                p50_actions = ad_data.get("video_p50_watched_actions", [])
+                if p50_actions:
+                    video_p50 = int(p50_actions[0].get("value", 0))
+
+                p75_actions = ad_data.get("video_p75_watched_actions", [])
+                if p75_actions:
+                    video_p75 = int(p75_actions[0].get("value", 0))
+
+                p100_actions = ad_data.get("video_p100_watched_actions", [])
+                if p100_actions:
+                    video_p100 = int(p100_actions[0].get("value", 0))
+
+                thruplay_actions = ad_data.get("video_thruplay_watched_actions", [])
+                if thruplay_actions:
+                    video_thruplay = int(thruplay_actions[0].get("value", 0))
+
+                avg_time_actions = ad_data.get("video_avg_time_watched_actions", [])
+                if avg_time_actions:
+                    video_avg_time = float(avg_time_actions[0].get("value", 0))
+
                 ads_data.append({
                     "ad_id": ad_id,
                     "ad_name": ad_data.get("ad_name", ""),
@@ -355,6 +408,15 @@ class MetaAdsClient:
                     "cpc": cpc,
                     "cpm": cpm,
                     "account_id": self.ad_account_id,
+                    # Video metrics
+                    "video_plays": video_plays,
+                    "video_3s_views": video_3s_views,
+                    "video_p25": video_p25,
+                    "video_p50": video_p50,
+                    "video_p75": video_p75,
+                    "video_p100": video_p100,
+                    "video_thruplay": video_thruplay,
+                    "video_avg_time": video_avg_time,
                 })
                 ad_ids.append(ad_id)
 
@@ -627,8 +689,15 @@ def get_demo_data() -> pd.DataFrame:
             "headline": random.choice(headlines),
             "link_url": random.choice(landing_pages),
             "video_id": f"video_{i+1}" if creative_type == "VIDEO" else "",
-            # For video hooks demo - 3 second views vs impressions
+            # Video metrics
+            "video_plays": int(impressions * random.uniform(0.3, 0.6)) if creative_type == "VIDEO" else 0,
             "video_3s_views": int(impressions * random.uniform(0.15, 0.45)) if creative_type == "VIDEO" else 0,
+            "video_p25": int(impressions * random.uniform(0.10, 0.35)) if creative_type == "VIDEO" else 0,
+            "video_p50": int(impressions * random.uniform(0.05, 0.25)) if creative_type == "VIDEO" else 0,
+            "video_p75": int(impressions * random.uniform(0.03, 0.15)) if creative_type == "VIDEO" else 0,
+            "video_p100": int(impressions * random.uniform(0.01, 0.10)) if creative_type == "VIDEO" else 0,
+            "video_thruplay": int(impressions * random.uniform(0.05, 0.20)) if creative_type == "VIDEO" else 0,
+            "video_avg_time": round(random.uniform(3.0, 25.0), 1) if creative_type == "VIDEO" else 0,
         })
 
     return pd.DataFrame(data)

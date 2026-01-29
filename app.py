@@ -565,7 +565,7 @@ def render_videos_tab(df: pd.DataFrame):
 
 
 def render_video_hooks_tab(df: pd.DataFrame):
-    """Render the Video Hooks tab with Thumbstop % metric."""
+    """Render the Video Hooks tab with video performance metrics."""
     if df.empty:
         st.info("No data available")
         return
@@ -577,41 +577,99 @@ def render_video_hooks_tab(df: pd.DataFrame):
         st.info("No video creatives found")
         return
 
-    # Calculate Thumbstop % (3-second views / impressions * 100)
+    # Ensure video metric columns exist with fallbacks
     if "video_3s_views" not in videos_df.columns:
-        videos_df["video_3s_views"] = videos_df["impressions"] * 0.25  # Demo fallback
+        videos_df["video_3s_views"] = videos_df["impressions"] * 0.25
+    if "video_plays" not in videos_df.columns:
+        videos_df["video_plays"] = videos_df["impressions"] * 0.4
+    if "video_p25" not in videos_df.columns:
+        videos_df["video_p25"] = videos_df["impressions"] * 0.2
+    if "video_p50" not in videos_df.columns:
+        videos_df["video_p50"] = videos_df["impressions"] * 0.15
+    if "video_p75" not in videos_df.columns:
+        videos_df["video_p75"] = videos_df["impressions"] * 0.1
+    if "video_p100" not in videos_df.columns:
+        videos_df["video_p100"] = videos_df["impressions"] * 0.05
+    if "video_thruplay" not in videos_df.columns:
+        videos_df["video_thruplay"] = videos_df["impressions"] * 0.12
+    if "video_avg_time" not in videos_df.columns:
+        videos_df["video_avg_time"] = 10.0
 
-    videos_df["thumbstop_pct"] = videos_df.apply(
-        lambda r: (r.get("video_3s_views", 0) / r["impressions"] * 100) if r["impressions"] > 0 else 0,
-        axis=1
+    # Calculate video metrics
+    # Hook Rate = video plays / impressions (how many started watching)
+    videos_df["hook_rate"] = videos_df.apply(
+        lambda r: (r["video_plays"] / r["impressions"] * 100) if r["impressions"] > 0 else 0, axis=1
     )
 
-    # Sort by thumbstop
-    sorted_df = videos_df.sort_values("thumbstop_pct", ascending=False)
+    # Thumbstop % = 3-second views / impressions
+    videos_df["thumbstop_pct"] = videos_df.apply(
+        lambda r: (r["video_3s_views"] / r["impressions"] * 100) if r["impressions"] > 0 else 0, axis=1
+    )
 
-    display_cols = ["ad_name", "thumbstop_pct", "spend", "roas", "impressions"]
-    available_cols = [c for c in display_cols if c in sorted_df.columns]
-    display_df = sorted_df[available_cols].copy()
+    # Hold Rate = 50% watched / 3-second views (retention after hook)
+    videos_df["hold_rate"] = videos_df.apply(
+        lambda r: (r["video_p50"] / r["video_3s_views"] * 100) if r["video_3s_views"] > 0 else 0, axis=1
+    )
 
-    col_names = {
-        "ad_name": "Video",
-        "thumbstop_pct": "Thumbstop %",
-        "spend": "Spend",
-        "roas": "ROAS",
-        "impressions": "Impressions",
+    # View Through Rate = ThruPlay / impressions
+    videos_df["view_through_rate"] = videos_df.apply(
+        lambda r: (r["video_thruplay"] / r["impressions"] * 100) if r["impressions"] > 0 else 0, axis=1
+    )
+
+    # Completion Rate = 100% watched / video plays
+    videos_df["completion_rate"] = videos_df.apply(
+        lambda r: (r["video_p100"] / r["video_plays"] * 100) if r["video_plays"] > 0 else 0, axis=1
+    )
+
+    # Sort options
+    sort_by = st.selectbox(
+        "Sort by",
+        ["Thumbstop %", "Hook Rate", "Hold Rate", "View Through", "Avg Watch Time", "Spend"],
+        key="video_sort"
+    )
+
+    sort_map = {
+        "Thumbstop %": "thumbstop_pct",
+        "Hook Rate": "hook_rate",
+        "Hold Rate": "hold_rate",
+        "View Through": "view_through_rate",
+        "Avg Watch Time": "video_avg_time",
+        "Spend": "spend",
     }
-    display_df.rename(columns=col_names, inplace=True)
+    sorted_df = videos_df.sort_values(sort_map[sort_by], ascending=False)
 
-    if "Thumbstop %" in display_df.columns:
-        display_df["Thumbstop %"] = display_df["Thumbstop %"].apply(lambda x: f"{x:.1f}%")
-    if "Spend" in display_df.columns:
-        display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
-    if "ROAS" in display_df.columns:
-        display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
-    if "Impressions" in display_df.columns:
-        display_df["Impressions"] = display_df["Impressions"].apply(lambda x: f"{x:,}")
+    # Build display dataframe
+    display_df = sorted_df[[
+        "ad_name", "hook_rate", "thumbstop_pct", "hold_rate",
+        "view_through_rate", "video_avg_time", "spend", "roas"
+    ]].copy()
+
+    display_df.columns = [
+        "Video", "Hook Rate", "Thumbstop %", "Hold Rate",
+        "View Through", "Avg Watch (sec)", "Spend", "ROAS"
+    ]
+
+    # Format percentages
+    display_df["Hook Rate"] = display_df["Hook Rate"].apply(lambda x: f"{x:.1f}%")
+    display_df["Thumbstop %"] = display_df["Thumbstop %"].apply(lambda x: f"{x:.1f}%")
+    display_df["Hold Rate"] = display_df["Hold Rate"].apply(lambda x: f"{x:.1f}%")
+    display_df["View Through"] = display_df["View Through"].apply(lambda x: f"{x:.1f}%")
+    display_df["Avg Watch (sec)"] = display_df["Avg Watch (sec)"].apply(lambda x: f"{x:.1f}s")
+    display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
+    display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
 
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+    # Add metric explanations
+    with st.expander("Metric Definitions"):
+        st.markdown("""
+        - **Hook Rate**: % of impressions that started playing the video
+        - **Thumbstop %**: % of impressions that watched at least 3 seconds
+        - **Hold Rate**: % of 3-second viewers that watched to 50% (retention)
+        - **View Through**: % of impressions that completed ThruPlay (15 sec or full video)
+        - **Avg Watch (sec)**: Average time users watched the video
+        - **Completion Rate**: % of video plays that watched 100%
+        """)
 
 
 def render_copies_tab(df: pd.DataFrame):
