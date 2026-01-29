@@ -426,21 +426,16 @@ class MetaAdsClient:
                 })
                 ad_ids.append(ad_id)
 
-            # Fetch creative details for each ad
-            creative_info = self._fetch_creative_info(ad_ids)
-
-            # Merge creative info
+            # Skip fetching creative details to speed up loading
+            # Creative info (thumbnails, body, etc.) is optional and slow
+            # Just set defaults for now
             for ad in ads_data:
-                ad_id = ad["ad_id"]
-                if ad_id in creative_info:
-                    ad.update(creative_info[ad_id])
-                else:
-                    ad["thumbnail_url"] = ""
-                    ad["creative_type"] = ""
-                    ad["body"] = ""
-                    ad["headline"] = ""
-                    ad["link_url"] = ""
-                    ad["video_id"] = ""
+                ad["thumbnail_url"] = ""
+                ad["creative_type"] = "VIDEO" if "VID" in str(ad.get("ad_name", "")).upper() else "IMAGE"
+                ad["body"] = ""
+                ad["headline"] = ""
+                ad["link_url"] = ""
+                ad["video_id"] = ""
 
         except Exception as e:
             print(f"Error fetching ads: {e}")

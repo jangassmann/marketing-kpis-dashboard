@@ -23,6 +23,22 @@ from src.meta_api import (
 
 load_dotenv()
 
+
+# Cache data for 10 minutes to speed up page loads
+@st.cache_data(ttl=600)
+def load_cached_data(date_start_str: str, date_end_str: str, use_demo: bool):
+    """Load and cache data from Meta API."""
+    if use_demo:
+        return get_demo_data(), get_demo_insights()
+
+    date_start = datetime.strptime(date_start_str, "%Y-%m-%d")
+    date_end = datetime.strptime(date_end_str, "%Y-%m-%d")
+    date_end = datetime.combine(date_end, datetime.max.time())
+
+    data = fetch_all_accounts_data(date_start, date_end)
+    insights = fetch_all_accounts_insights(date_start, date_end)
+    return data, insights
+
 # Page configuration
 st.set_page_config(
     page_title="Win Rate Tracker",
@@ -555,21 +571,20 @@ def main():
         st.subheader("Win Criteria")
         st.info("**Winner** = ≥$1,000 spend AND ≥2.0 ROAS")
 
-    # Load data
+    # Load data (cached for 10 minutes)
     if st.session_state.data is None or st.session_state.insights is None:
-        with st.spinner("Loading data from all accounts..."):
-            if st.session_state.use_demo:
+        with st.spinner("Loading data..."):
+            try:
+                date_start_str = date_start.strftime("%Y-%m-%d")
+                date_end_str = date_end.strftime("%Y-%m-%d")
+                st.session_state.data, st.session_state.insights = load_cached_data(
+                    date_start_str, date_end_str, st.session_state.use_demo
+                )
+            except Exception as e:
+                st.error(f"Error loading data: {e}")
+                st.info("Switching to demo data...")
                 st.session_state.data = get_demo_data()
                 st.session_state.insights = get_demo_insights()
-            else:
-                try:
-                    st.session_state.data = fetch_all_accounts_data(date_start, date_end)
-                    st.session_state.insights = fetch_all_accounts_insights(date_start, date_end)
-                except Exception as e:
-                    st.error(f"Error loading data: {e}")
-                    st.info("Switching to demo data...")
-                    st.session_state.data = get_demo_data()
-                    st.session_state.insights = get_demo_insights()
 
     df = st.session_state.data
     insights = st.session_state.insights
