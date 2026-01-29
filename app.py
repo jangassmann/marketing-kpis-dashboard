@@ -95,8 +95,11 @@ st.markdown("""
         color: #111827 !important;
     }
 
-    /* Dropdown menu styling */
+    /* Dropdown menu styling - force white background */
     [data-baseweb="popover"] {
+        background-color: white !important;
+    }
+    [data-baseweb="popover"] > div {
         background-color: white !important;
     }
     [data-baseweb="menu"] {
@@ -104,12 +107,33 @@ st.markdown("""
     }
     [data-baseweb="menu"] li {
         color: #111827 !important;
+        background-color: white !important;
+    }
+    [data-baseweb="menu"] li:hover {
+        background-color: #f3f4f6 !important;
     }
     [role="listbox"] {
         background-color: white !important;
     }
+    [role="listbox"] > div {
+        background-color: white !important;
+    }
     [role="option"] {
         color: #111827 !important;
+        background-color: white !important;
+    }
+    [role="option"]:hover {
+        background-color: #f3f4f6 !important;
+    }
+    [data-highlighted="true"] {
+        background-color: #f3f4f6 !important;
+    }
+    /* Fix dropdown list container */
+    ul[role="listbox"] {
+        background-color: white !important;
+    }
+    div[data-baseweb="popover"] > div > div {
+        background-color: white !important;
     }
 
     /* Overview cards - white with shadow */
@@ -275,16 +299,65 @@ def get_month_date_range(year: int, month: int):
 
 
 def extract_base_creative_name(name: str) -> str:
-    """Extract base creative name to identify unique creatives."""
+    """Extract base creative name to identify unique creatives.
+
+    Same creative name = same creative, even if duplicated in account.
+    We use the full ad_name as the creative identifier.
+    """
     if not name:
         return "Unknown"
-    # Remove common suffixes like _1, _2, - Copy, etc.
-    base = re.sub(r'(_\d+|_copy|\s*-\s*copy\s*\d*|\s+\d+)$', '', str(name), flags=re.IGNORECASE)
-    return base.strip()
+    return str(name).strip()
+
+
+def aggregate_by_creative(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate all ads by unique creative name.
+
+    Same ad_name = same creative. Combine spend, revenue, purchases, etc.
+    This gives us the true performance of each unique creative.
+    """
+    if df.empty:
+        return df
+
+    df = df.copy()
+
+    # Group by ad_name (creative name) and aggregate metrics
+    agg_df = df.groupby("ad_name", as_index=False).agg({
+        "spend": "sum",
+        "impressions": "sum",
+        "clicks": "sum",
+        "purchases": "sum",
+        "purchase_value": "sum",
+        # Keep first value for non-numeric fields
+        "campaign_name": "first",
+        "adset_name": "first",
+        "creative_type": "first",
+        "account_id": "first",
+    })
+
+    # Recalculate ROAS based on aggregated values
+    agg_df["roas"] = agg_df.apply(
+        lambda row: row["purchase_value"] / row["spend"] if row["spend"] > 0 else 0,
+        axis=1
+    )
+
+    # Recalculate CPA
+    agg_df["cpa"] = agg_df.apply(
+        lambda row: row["spend"] / row["purchases"] if row["purchases"] > 0 else 0,
+        axis=1
+    )
+
+    return agg_df
 
 
 def calculate_monthly_stats(df: pd.DataFrame, min_spend: float = 1000, min_roas: float = 2.0):
-    """Calculate monthly statistics."""
+    """Calculate monthly statistics based on unique creatives.
+
+    Key logic:
+    - Aggregate all ads by creative name first
+    - Count unique creatives
+    - Calculate winners based on aggregated creative performance
+    - Win rate = winners / qualified creatives (not individual ads)
+    """
     if df.empty:
         return {
             "total_ads": 0,
@@ -295,29 +368,29 @@ def calculate_monthly_stats(df: pd.DataFrame, min_spend: float = 1000, min_roas:
             "avg_roas": 0,
         }
 
-    df = df.copy()
+    # Aggregate by unique creative name
+    creative_df = aggregate_by_creative(df)
 
-    # Extract base creative names
-    df["base_name"] = df["ad_name"].apply(extract_base_creative_name)
+    # Count unique creatives
+    unique_creatives = len(creative_df)
 
-    # Count unique creatives (new ads launched)
-    unique_creatives = df["base_name"].nunique()
+    # Qualified creatives = those with >= min_spend (aggregated)
+    qualified = creative_df[creative_df["spend"] >= min_spend]
 
-    # Calculate winners
-    qualified = df[df["spend"] >= min_spend]
+    # Winners = qualified creatives with >= min_roas (after aggregation)
     winners = qualified[qualified["roas"] >= min_roas]
 
-    # Win rate based on ads with sufficient spend
+    # Win rate based on qualified unique creatives
     win_rate = (len(winners) / len(qualified) * 100) if len(qualified) > 0 else 0
 
     return {
-        "total_ads": len(df),
-        "unique_creatives": unique_creatives,
-        "qualified_ads": len(qualified),
+        "total_ads": len(df),  # Raw ad count
+        "unique_creatives": unique_creatives,  # Unique creative count
+        "qualified_creatives": len(qualified),
         "winners": len(winners),
         "win_rate": win_rate,
-        "total_spend": df["spend"].sum(),
-        "avg_roas": df["purchase_value"].sum() / df["spend"].sum() if df["spend"].sum() > 0 else 0,
+        "total_spend": creative_df["spend"].sum(),
+        "avg_roas": creative_df["purchase_value"].sum() / creative_df["spend"].sum() if creative_df["spend"].sum() > 0 else 0,
     }
 
 
@@ -400,14 +473,12 @@ def render_header_bar():
 def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 2.0):
     """Render the Overview section with monthly stats and MoM comparison."""
 
-    # Current month stats
+    # Current month stats - based on unique creatives
     current_stats = calculate_monthly_stats(df, min_spend=1000, min_roas=min_roas)
 
     # For demo purposes, simulate previous month data (in real app, fetch separately)
-    # Previous month would have slightly different numbers
     prev_stats = {
-        "total_ads": int(current_stats["total_ads"] * 0.85),
-        "unique_creatives": int(current_stats["unique_creatives"] * 0.9),
+        "unique_creatives": int(current_stats["unique_creatives"] * 0.85),
         "winners": int(current_stats["winners"] * 0.8),
         "win_rate": current_stats["win_rate"] * 0.95,
     }
@@ -418,7 +489,7 @@ def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 
             return 0
         return ((current - previous) / previous) * 100
 
-    ads_change = calc_change(current_stats["total_ads"], prev_stats["total_ads"])
+    creatives_change = calc_change(current_stats["unique_creatives"], prev_stats["unique_creatives"])
     winners_change = calc_change(current_stats["winners"], prev_stats["winners"])
     winrate_change = calc_change(current_stats["win_rate"], prev_stats["win_rate"])
 
@@ -426,10 +497,10 @@ def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 
 
     with col1:
         render_overview_card(
-            "TOTAL ADS",
-            f"{current_stats['total_ads']:,}",
-            "Active campaigns",
-            ads_change
+            "UNIQUE CREATIVES",
+            f"{current_stats['unique_creatives']:,}",
+            "Distinct ad names",
+            creatives_change
         )
 
     with col2:
@@ -441,10 +512,11 @@ def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 
         )
 
     with col3:
+        qualified = current_stats.get('qualified_creatives', 0)
         render_overview_card(
             "WIN RATE",
             f"{current_stats['win_rate']:.1f}%",
-            f"Last 30 days",
+            f"{current_stats['winners']}/{qualified} qualified",
             winrate_change
         )
 
@@ -491,13 +563,13 @@ def render_monthly_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
 
 
 def render_format_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
-    """Render format breakdown with win rates."""
+    """Render format breakdown with win rates based on unique creatives."""
     if df.empty:
         st.info("No data available")
         return
 
-    # Detect format from ad name or creative_type
-    df = df.copy()
+    # First aggregate by unique creative
+    creative_df = aggregate_by_creative(df)
 
     def get_format(row):
         name = str(row.get("ad_name", "")).upper()
@@ -510,18 +582,18 @@ def render_format_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
         else:
             return "Image"
 
-    df["format"] = df.apply(get_format, axis=1)
+    creative_df["format"] = creative_df.apply(get_format, axis=1)
 
-    # Calculate stats per format
+    # Calculate stats per format based on unique creatives
     formats = []
-    for fmt in df["format"].unique():
-        fmt_df = df[df["format"] == fmt]
+    for fmt in creative_df["format"].unique():
+        fmt_df = creative_df[creative_df["format"] == fmt]
         qualified = fmt_df[fmt_df["spend"] >= 1000]
         winners = qualified[qualified["roas"] >= min_roas]
 
         formats.append({
             "Name": fmt,
-            "Total Ads": len(fmt_df),
+            "Creatives": len(fmt_df),
             "Winners": len(winners),
             "Win Rate": f"{(len(winners) / len(qualified) * 100) if len(qualified) > 0 else 0:.1f}%",
             "Spend": format_currency(fmt_df["spend"].sum()),
@@ -533,13 +605,16 @@ def render_format_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
 
 
 def render_winners_table(df: pd.DataFrame, min_roas: float = 2.0):
-    """Render winning creatives table."""
+    """Render winning creatives table based on aggregated unique creatives."""
     if df.empty:
         st.info("No data available")
         return
 
-    # Filter for winners
-    qualified = df[df["spend"] >= 1000]
+    # Aggregate by unique creative first
+    creative_df = aggregate_by_creative(df)
+
+    # Filter for winners (based on aggregated metrics)
+    qualified = creative_df[creative_df["spend"] >= 1000]
     winners = qualified[qualified["roas"] >= min_roas].copy()
 
     if winners.empty:
@@ -549,7 +624,7 @@ def render_winners_table(df: pd.DataFrame, min_roas: float = 2.0):
     winners = winners.sort_values("roas", ascending=False)
 
     display_df = winners[["ad_name", "spend", "roas", "purchases", "purchase_value"]].head(20).copy()
-    display_df.columns = ["Ad Name", "Spend", "ROAS", "Purchases", "Revenue"]
+    display_df.columns = ["Creative Name", "Spend", "ROAS", "Purchases", "Revenue"]
     display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
     display_df["Revenue"] = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
     display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
