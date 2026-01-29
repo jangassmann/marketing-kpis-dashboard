@@ -266,6 +266,51 @@ st.markdown("""
         background-color: white !important;
     }
 
+    /* Date picker calendar popup */
+    [data-baseweb="calendar"] {
+        background-color: white !important;
+    }
+    [data-baseweb="calendar"] * {
+        color: #111827 !important;
+    }
+    [data-baseweb="calendar"] [role="grid"] {
+        background-color: white !important;
+    }
+    [data-baseweb="calendar"] button {
+        color: #111827 !important;
+        background-color: white !important;
+    }
+    [data-baseweb="calendar"] button:hover {
+        background-color: #f3f4f6 !important;
+    }
+    [data-baseweb="calendar"] [aria-selected="true"] {
+        background-color: #3b82f6 !important;
+        color: white !important;
+    }
+    [data-baseweb="calendar"] [data-highlighted="true"] {
+        background-color: #dbeafe !important;
+    }
+    /* Calendar header */
+    [data-baseweb="calendar"] [data-baseweb="typo-labellarge"],
+    [data-baseweb="calendar"] [data-baseweb="typo-labelmedium"] {
+        color: #111827 !important;
+    }
+    /* Month/Year selectors */
+    [data-baseweb="select"] {
+        background-color: white !important;
+    }
+    /* Day names row */
+    [data-baseweb="calendar"] thead th {
+        color: #6b7280 !important;
+    }
+    /* Calendar days */
+    [data-baseweb="calendar"] td {
+        color: #111827 !important;
+    }
+    [data-baseweb="calendar"] td button {
+        color: #111827 !important;
+    }
+
     /* Hide Streamlit elements */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
