@@ -275,7 +275,7 @@ def format_currency(value: float) -> str:
     if value >= 1000000:
         return f"${value/1000000:.2f}M"
     elif value >= 1000:
-        return f"${value/1000:,.0f}"
+        return f"${value:,.0f}"
     return f"${value:.2f}"
 
 
@@ -525,45 +525,48 @@ def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 
 
 
 def render_monthly_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
-    """Render monthly breakdown table."""
+    """Render monthly breakdown table based on selected date range."""
     if df.empty:
         st.info("No data available")
         return
 
     st.markdown("### Monthly Performance")
 
-    # Get current month stats
-    stats = calculate_monthly_stats(df, min_spend=1000, min_roas=min_roas)
+    # Aggregate by unique creative
+    creative_df = aggregate_by_creative(df)
 
-    # For demo, create monthly breakdown
-    # In real implementation, would need to fetch historical data per month
+    # Get current stats from actual data
+    unique_creatives = len(creative_df)
+    total_spend = creative_df["spend"].sum()
+    total_revenue = creative_df["purchase_value"].sum()
+
+    # Winners = creatives that hit BOTH KPIs
+    winners = creative_df[(creative_df["spend"] >= 1000) & (creative_df["roas"] >= min_roas)]
+    num_winners = len(winners)
+
+    # Win rate = winners / total creatives
+    win_rate = (num_winners / unique_creatives * 100) if unique_creatives > 0 else 0
+
+    # Blended ROAS
+    blended_roas = total_revenue / total_spend if total_spend > 0 else 0
+
+    # Show current period stats (based on selected date range)
     now = datetime.now()
-    months_data = []
+    month_name = now.strftime("%B %Y")
 
-    for i in range(6):  # Last 6 months
-        month_date = now - timedelta(days=30 * i)
-        month_name = month_date.strftime("%B %Y")
-
-        # Simulate declining data for older months (demo)
-        factor = 1 - (i * 0.1)
-        new_ads = int(stats["unique_creatives"] * factor)
-        winners = int(stats["winners"] * factor)
-        total_spend = stats["total_spend"] * factor
-
-        # Win rate = winners / new_ads (correct formula)
-        win_rate = (winners / new_ads * 100) if new_ads > 0 else 0
-
-        months_data.append({
-            "Month": month_name,
-            "New Ads": new_ads,
-            "Total Spend": format_currency(total_spend),
-            "Winners": winners,
-            "Win Rate": f"{win_rate:.1f}%",
-            "Blended ROAS": f"{stats['avg_roas'] * (0.9 + i * 0.05):.2f}",
-        })
+    months_data = [{
+        "Month": month_name,
+        "Creatives": unique_creatives,
+        "Total Spend": format_currency(total_spend),
+        "Winners": num_winners,
+        "Win Rate": f"{win_rate:.1f}%",
+        "Blended ROAS": f"{blended_roas:.2f}",
+    }]
 
     monthly_df = pd.DataFrame(months_data)
     st.dataframe(monthly_df, use_container_width=True, hide_index=True)
+
+    st.caption("Note: Shows data for the selected date range. Historical monthly data requires separate API calls.")
 
 
 def render_format_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
