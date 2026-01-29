@@ -239,11 +239,31 @@ st.markdown("""
     [data-testid="stSidebar"] {
         background-color: #1f2937 !important;
     }
-    [data-testid="stSidebar"] .stMarkdown {
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] .stMarkdown p,
+    [data-testid="stSidebar"] .stMarkdown h1,
+    [data-testid="stSidebar"] .stMarkdown h2,
+    [data-testid="stSidebar"] .stMarkdown h3,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] .stCaption {
         color: white !important;
     }
     [data-testid="stSidebar"] label {
         color: white !important;
+    }
+    [data-testid="stSidebar"] code {
+        background-color: #374151 !important;
+        color: #e5e7eb !important;
+    }
+
+    /* Date input styling */
+    .stDateInput > div > div {
+        background-color: white !important;
+        border-radius: 8px !important;
+    }
+    .stDateInput input {
+        color: #111827 !important;
+        background-color: white !important;
     }
 
     /* Hide Streamlit elements */
@@ -251,14 +271,14 @@ st.markdown("""
     footer {visibility: hidden;}
     .stDeployButton {display: none;}
 
-    /* Button styling */
+    /* Button styling - blue refresh button */
     .stButton > button {
-        background-color: #ef4444 !important;
+        background-color: #3b82f6 !important;
         color: white !important;
         border: none !important;
     }
     .stButton > button:hover {
-        background-color: #dc2626 !important;
+        background-color: #2563eb !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -468,7 +488,7 @@ def render_header_bar():
             st.markdown("<p style='color: #6b7280; font-size: 13px; margin-top: 8px;'>Not refreshed</p>", unsafe_allow_html=True)
 
     with col6:
-        if st.button("🔄", type="primary", use_container_width=True, help="Refresh Data"):
+        if st.button("Refresh", type="primary", use_container_width=True):
             st.cache_data.clear()
             st.session_state.data = None
             st.session_state.insights = None
@@ -728,26 +748,11 @@ def render_losers_table(df: pd.DataFrame, min_roas: float = 2.0):
 
 
 def render_team_section():
-    """Render team invite section in sidebar."""
-    st.markdown("### Team")
-
-    # Show current app URL for sharing
-    st.markdown("**Share Dashboard**")
+    """Render team sharing section in sidebar."""
+    st.markdown("### Share Dashboard")
     st.caption("Share this URL with your team:")
     st.code("https://your-app.streamlit.app", language=None)
-
-    st.markdown("---")
-
-    # Invite by email
-    st.markdown("**Invite Members**")
-    with st.form("invite_form", clear_on_submit=True):
-        email = st.text_input("Email address", placeholder="colleague@company.com")
-        submitted = st.form_submit_button("Send Invite", use_container_width=True)
-        if submitted and email:
-            st.success(f"Invite sent to {email}!")
-            # Note: Actual email sending would require additional setup
-
-    st.caption("Team members will get view access to this dashboard.")
+    st.caption("Anyone with the link can view this dashboard.")
 
 
 def main():
