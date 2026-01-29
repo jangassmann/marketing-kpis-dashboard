@@ -19,6 +19,7 @@ from src.meta_api import (
     get_available_ad_accounts,
     fetch_all_accounts_data,
     fetch_all_accounts_insights,
+    fetch_monthly_data,
 )
 
 load_dotenv()
@@ -38,6 +39,13 @@ def load_cached_data(date_start_str: str, date_end_str: str, use_demo: bool):
     data = fetch_all_accounts_data(date_start, date_end)
     insights = fetch_all_accounts_insights(date_start, date_end)
     return data, insights
+
+
+# Cache monthly historical data for 30 minutes (longer since historical data doesn't change)
+@st.cache_data(ttl=1800)
+def load_monthly_historical_data(num_months: int = 6):
+    """Load and cache monthly historical data."""
+    return fetch_monthly_data(num_months)
 
 
 # Page configuration
@@ -524,49 +532,91 @@ def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 
         )
 
 
-def render_monthly_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
-    """Render monthly breakdown table based on selected date range."""
-    if df.empty:
-        st.info("No data available")
-        return
-
+def render_monthly_breakdown(df: pd.DataFrame, min_roas: float = 2.0, use_demo: bool = False):
+    """Render monthly breakdown table with real historical data."""
     st.markdown("### Monthly Performance")
 
-    # Aggregate by unique creative
-    creative_df = aggregate_by_creative(df)
+    if use_demo:
+        # For demo mode, just show current data
+        if df.empty:
+            st.info("No data available")
+            return
 
-    # Get current stats from actual data
-    unique_creatives = len(creative_df)
-    total_spend = creative_df["spend"].sum()
-    total_revenue = creative_df["purchase_value"].sum()
+        creative_df = aggregate_by_creative(df)
+        unique_creatives = len(creative_df)
+        total_spend = creative_df["spend"].sum()
+        total_revenue = creative_df["purchase_value"].sum()
+        winners = creative_df[(creative_df["spend"] >= 1000) & (creative_df["roas"] >= min_roas)]
+        num_winners = len(winners)
+        win_rate = (num_winners / unique_creatives * 100) if unique_creatives > 0 else 0
+        blended_roas = total_revenue / total_spend if total_spend > 0 else 0
 
-    # Winners = creatives that hit BOTH KPIs
-    winners = creative_df[(creative_df["spend"] >= 1000) & (creative_df["roas"] >= min_roas)]
-    num_winners = len(winners)
+        months_data = [{
+            "Month": datetime.now().strftime("%B %Y"),
+            "Creatives": unique_creatives,
+            "Total Spend": format_currency(total_spend),
+            "Winners": num_winners,
+            "Win Rate": f"{win_rate:.1f}%",
+            "Blended ROAS": f"{blended_roas:.2f}",
+        }]
+        monthly_df = pd.DataFrame(months_data)
+        st.dataframe(monthly_df, use_container_width=True, hide_index=True)
+        return
 
-    # Win rate = winners / total creatives
-    win_rate = (num_winners / unique_creatives * 100) if unique_creatives > 0 else 0
+    # Fetch real historical data for last 6 months
+    with st.spinner("Loading historical monthly data..."):
+        try:
+            monthly_data = load_monthly_historical_data(num_months=6)
+        except Exception as e:
+            st.error(f"Error loading historical data: {e}")
+            return
 
-    # Blended ROAS
-    blended_roas = total_revenue / total_spend if total_spend > 0 else 0
+    if not monthly_data:
+        st.info("No historical data available")
+        return
 
-    # Show current period stats (based on selected date range)
-    now = datetime.now()
-    month_name = now.strftime("%B %Y")
+    months_data = []
 
-    months_data = [{
-        "Month": month_name,
-        "Creatives": unique_creatives,
-        "Total Spend": format_currency(total_spend),
-        "Winners": num_winners,
-        "Win Rate": f"{win_rate:.1f}%",
-        "Blended ROAS": f"{blended_roas:.2f}",
-    }]
+    for month_name, month_df in monthly_data.items():
+        if month_df.empty:
+            months_data.append({
+                "Month": month_name,
+                "Creatives": 0,
+                "Total Spend": "$0",
+                "Winners": 0,
+                "Win Rate": "0.0%",
+                "Blended ROAS": "0.00",
+            })
+            continue
+
+        # Aggregate by unique creative for this month
+        creative_df = aggregate_by_creative(month_df)
+
+        unique_creatives = len(creative_df)
+        total_spend = creative_df["spend"].sum()
+        total_revenue = creative_df["purchase_value"].sum()
+
+        # Winners = creatives that hit BOTH KPIs
+        winners = creative_df[(creative_df["spend"] >= 1000) & (creative_df["roas"] >= min_roas)]
+        num_winners = len(winners)
+
+        # Win rate = winners / total creatives
+        win_rate = (num_winners / unique_creatives * 100) if unique_creatives > 0 else 0
+
+        # Blended ROAS
+        blended_roas = total_revenue / total_spend if total_spend > 0 else 0
+
+        months_data.append({
+            "Month": month_name,
+            "Creatives": unique_creatives,
+            "Total Spend": format_currency(total_spend),
+            "Winners": num_winners,
+            "Win Rate": f"{win_rate:.1f}%",
+            "Blended ROAS": f"{blended_roas:.2f}",
+        })
 
     monthly_df = pd.DataFrame(months_data)
     st.dataframe(monthly_df, use_container_width=True, hide_index=True)
-
-    st.caption("Note: Shows data for the selected date range. Historical monthly data requires separate API calls.")
 
 
 def render_format_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
@@ -729,7 +779,7 @@ def main():
         render_format_breakdown(df, min_roas)
 
     with tab2:
-        render_monthly_breakdown(df, min_roas)
+        render_monthly_breakdown(df, min_roas, use_demo=st.session_state.use_demo)
 
     with tab3:
         render_winners_table(df, min_roas)

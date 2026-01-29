@@ -621,6 +621,46 @@ def fetch_all_accounts_insights(
     return combined
 
 
+def fetch_monthly_data(num_months: int = 6) -> Dict[str, pd.DataFrame]:
+    """Fetch data for multiple months for historical comparison.
+
+    Returns a dict with month keys (e.g., "January 2026") and DataFrame values.
+    """
+    from calendar import monthrange
+
+    monthly_data = {}
+    now = datetime.now()
+
+    for i in range(num_months):
+        # Calculate month start/end
+        if i == 0:
+            # Current month: 1st to today
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            month_end = now
+        else:
+            # Previous months: full month
+            year = now.year
+            month = now.month - i
+            while month <= 0:
+                month += 12
+                year -= 1
+
+            month_start = datetime(year, month, 1)
+            last_day = monthrange(year, month)[1]
+            month_end = datetime(year, month, last_day, 23, 59, 59)
+
+        month_key = month_start.strftime("%B %Y")
+
+        try:
+            df = fetch_all_accounts_data(month_start, month_end)
+            monthly_data[month_key] = df
+        except Exception as e:
+            print(f"Error fetching data for {month_key}: {e}")
+            monthly_data[month_key] = pd.DataFrame()
+
+    return monthly_data
+
+
 def get_demo_data() -> pd.DataFrame:
     """Generate demo data for testing."""
     import random
