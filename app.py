@@ -48,47 +48,73 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Custom CSS for white theme
+# Custom CSS for white theme with visible text
 st.markdown("""
 <style>
-    /* White background theme */
+    /* White background theme - force light mode */
     .stApp {
-        background-color: #f8f9fa;
+        background-color: #f8f9fa !important;
     }
     .main > div {
         padding-top: 1rem;
     }
 
-    /* Header bar */
-    .header-bar {
-        background: white;
-        padding: 16px 24px;
-        border-radius: 12px;
-        margin-bottom: 24px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    /* Force light theme colors */
+    [data-testid="stAppViewContainer"] {
+        background-color: #f8f9fa !important;
     }
-    .header-title {
-        font-size: 24px;
-        font-weight: 700;
-        color: #111827;
-        margin: 0;
+    [data-testid="stHeader"] {
+        background-color: #f8f9fa !important;
     }
-    .header-controls {
-        display: flex;
-        align-items: center;
-        gap: 16px;
+
+    /* Make all text dark */
+    .stMarkdown, .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+        color: #111827 !important;
     }
-    .last-refresh {
-        color: #6b7280;
-        font-size: 13px;
+
+    /* Selectbox styling - ensure visible text */
+    .stSelectbox > div > div {
+        background-color: white !important;
+        border: 1px solid #e5e7eb !important;
+        border-radius: 8px !important;
+    }
+    .stSelectbox > div > div > div {
+        color: #111827 !important;
+    }
+    .stSelectbox label {
+        color: #374151 !important;
+    }
+    [data-baseweb="select"] {
+        background-color: white !important;
+    }
+    [data-baseweb="select"] > div {
+        background-color: white !important;
+        color: #111827 !important;
+    }
+    [data-baseweb="select"] span {
+        color: #111827 !important;
+    }
+
+    /* Dropdown menu styling */
+    [data-baseweb="popover"] {
+        background-color: white !important;
+    }
+    [data-baseweb="menu"] {
+        background-color: white !important;
+    }
+    [data-baseweb="menu"] li {
+        color: #111827 !important;
+    }
+    [role="listbox"] {
+        background-color: white !important;
+    }
+    [role="option"] {
+        color: #111827 !important;
     }
 
     /* Overview cards - white with shadow */
     .overview-card {
-        background: white;
+        background: white !important;
         border: 1px solid #e5e7eb;
         border-radius: 12px;
         padding: 24px;
@@ -97,7 +123,7 @@ st.markdown("""
     }
     .overview-label {
         font-size: 11px;
-        color: #6b7280;
+        color: #6b7280 !important;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.5px;
@@ -106,14 +132,14 @@ st.markdown("""
     .overview-value {
         font-size: 48px;
         font-weight: 700;
-        color: #111827;
+        color: #111827 !important;
         margin-bottom: 8px;
         font-family: 'SF Mono', 'Monaco', monospace;
         letter-spacing: -1px;
     }
     .overview-subtitle {
         font-size: 13px;
-        color: #6b7280;
+        color: #6b7280 !important;
     }
     .overview-change {
         display: inline-flex;
@@ -126,21 +152,21 @@ st.markdown("""
         margin-left: 8px;
     }
     .change-positive {
-        background: #dcfce7;
-        color: #15803d;
+        background: #dcfce7 !important;
+        color: #15803d !important;
     }
     .change-negative {
-        background: #fee2e2;
-        color: #dc2626;
+        background: #fee2e2 !important;
+        color: #dc2626 !important;
     }
     .change-neutral {
-        background: #f3f4f6;
-        color: #6b7280;
+        background: #f3f4f6 !important;
+        color: #6b7280 !important;
     }
 
     /* Section styling */
     .section-card {
-        background: white;
+        background: white !important;
         border-radius: 12px;
         padding: 24px;
         margin-bottom: 24px;
@@ -149,21 +175,43 @@ st.markdown("""
     .section-title {
         font-size: 18px;
         font-weight: 600;
-        color: #111827;
+        color: #111827 !important;
         margin-bottom: 16px;
     }
 
-    /* Filter pills */
-    .filter-container {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 24px;
+    /* Data tables - force light background */
+    .stDataFrame, [data-testid="stDataFrame"] {
+        background: white !important;
+    }
+    .stDataFrame th {
+        background-color: #f9fafb !important;
+        color: #374151 !important;
+    }
+    .stDataFrame td {
+        background-color: white !important;
+        color: #111827 !important;
     }
 
-    /* Data tables */
-    .dataframe {
-        background: white !important;
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: transparent !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: #6b7280 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #111827 !important;
+    }
+
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background-color: #1f2937 !important;
+    }
+    [data-testid="stSidebar"] .stMarkdown {
+        color: white !important;
+    }
+    [data-testid="stSidebar"] label {
+        color: white !important;
     }
 
     /* Hide Streamlit elements */
@@ -171,10 +219,14 @@ st.markdown("""
     footer {visibility: hidden;}
     .stDeployButton {display: none;}
 
-    /* Style selectbox */
-    .stSelectbox > div > div {
-        background: white;
-        border-radius: 8px;
+    /* Button styling */
+    .stButton > button {
+        background-color: #ef4444 !important;
+        color: white !important;
+        border: none !important;
+    }
+    .stButton > button:hover {
+        background-color: #dc2626 !important;
     }
 </style>
 """, unsafe_allow_html=True)
