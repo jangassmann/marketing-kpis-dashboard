@@ -383,9 +383,15 @@ class MetaAdsClient:
     def _fetch_creative_info(self, ad_ids: List[str]) -> Dict[str, Dict]:
         """Fetch creative info (thumbnails, body, headline, URL) for ads."""
         creative_info = {}
+        import time
 
-        for ad_id in ad_ids[:50]:  # Limit to avoid rate limits
+        # Process all ads, but add small delays to avoid rate limits
+        for idx, ad_id in enumerate(ad_ids):
             try:
+                # Add delay every 25 requests to avoid rate limits
+                if idx > 0 and idx % 25 == 0:
+                    time.sleep(1)
+
                 ad = Ad(ad_id)
                 ad_data = ad.api_get(fields=["creative"])
                 creative_data = ad_data.get("creative", {})
@@ -403,6 +409,7 @@ class MetaAdsClient:
                         "object_story_spec",
                         "video_id",
                         "asset_feed_spec",
+                        "effective_object_story_id",
                     ])
 
                     # Extract body and headline from various locations
@@ -410,6 +417,7 @@ class MetaAdsClient:
                     headline = info.get("title", "")
                     link_url = info.get("link_url", "")
                     video_id = info.get("video_id", "")
+                    object_type = info.get("object_type", "")
 
                     # Try to get from object_story_spec if not found
                     story_spec = info.get("object_story_spec", {})
@@ -431,16 +439,42 @@ class MetaAdsClient:
                             if not link_url:
                                 call_to_action = video_data.get("call_to_action", {})
                                 link_url = call_to_action.get("value", {}).get("link", "") if call_to_action else ""
+                            if not video_id:
+                                video_id = video_data.get("video_id", "")
+
+                    # Try asset_feed_spec for dynamic creative ads
+                    asset_feed = info.get("asset_feed_spec", {})
+                    if asset_feed and not body:
+                        bodies = asset_feed.get("bodies", [])
+                        if bodies:
+                            body = bodies[0].get("text", "")
+                    if asset_feed and not headline:
+                        titles = asset_feed.get("titles", [])
+                        if titles:
+                            headline = titles[0].get("text", "")
+                    if asset_feed and not link_url:
+                        link_urls = asset_feed.get("link_urls", [])
+                        if link_urls:
+                            link_url = link_urls[0].get("website_url", "")
+
+                    # Determine creative type from object_type
+                    creative_type = object_type
+                    if not creative_type:
+                        if video_id:
+                            creative_type = "VIDEO"
+                        else:
+                            creative_type = "IMAGE"
 
                     creative_info[ad_id] = {
                         "thumbnail_url": info.get("thumbnail_url") or info.get("image_url", ""),
-                        "creative_type": info.get("object_type", ""),
+                        "creative_type": creative_type,
                         "body": body,
                         "headline": headline,
                         "link_url": link_url,
                         "video_id": video_id,
                     }
-            except Exception:
+            except Exception as e:
+                print(f"Error fetching creative for ad {ad_id}: {e}")
                 pass
 
         return creative_info
