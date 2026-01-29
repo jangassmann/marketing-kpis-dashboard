@@ -1,6 +1,6 @@
 streamlit
 pandas
-facebook-business
-python-dotenv
 plotly
+python-dotenv
 requests
+facebook-business
