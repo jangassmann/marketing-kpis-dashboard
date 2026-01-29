@@ -369,6 +369,10 @@ class MetaAdsClient:
                 else:
                     ad["thumbnail_url"] = ""
                     ad["creative_type"] = ""
+                    ad["body"] = ""
+                    ad["headline"] = ""
+                    ad["link_url"] = ""
+                    ad["video_id"] = ""
 
         except Exception as e:
             print(f"Error fetching ads: {e}")
@@ -377,7 +381,7 @@ class MetaAdsClient:
         return pd.DataFrame(ads_data)
 
     def _fetch_creative_info(self, ad_ids: List[str]) -> Dict[str, Dict]:
-        """Fetch creative info (thumbnails) for ads."""
+        """Fetch creative info (thumbnails, body, headline, URL) for ads."""
         creative_info = {}
 
         for ad_id in ad_ids[:50]:  # Limit to avoid rate limits
@@ -393,10 +397,48 @@ class MetaAdsClient:
                         "thumbnail_url",
                         "object_type",
                         "image_url",
+                        "body",
+                        "title",
+                        "link_url",
+                        "object_story_spec",
+                        "video_id",
+                        "asset_feed_spec",
                     ])
+
+                    # Extract body and headline from various locations
+                    body = info.get("body", "")
+                    headline = info.get("title", "")
+                    link_url = info.get("link_url", "")
+                    video_id = info.get("video_id", "")
+
+                    # Try to get from object_story_spec if not found
+                    story_spec = info.get("object_story_spec", {})
+                    if story_spec:
+                        link_data = story_spec.get("link_data", {})
+                        if not body:
+                            body = link_data.get("message", "")
+                        if not headline:
+                            headline = link_data.get("name", "") or link_data.get("title", "")
+                        if not link_url:
+                            link_url = link_data.get("link", "")
+
+                        video_data = story_spec.get("video_data", {})
+                        if video_data:
+                            if not body:
+                                body = video_data.get("message", "")
+                            if not headline:
+                                headline = video_data.get("title", "")
+                            if not link_url:
+                                call_to_action = video_data.get("call_to_action", {})
+                                link_url = call_to_action.get("value", {}).get("link", "") if call_to_action else ""
+
                     creative_info[ad_id] = {
                         "thumbnail_url": info.get("thumbnail_url") or info.get("image_url", ""),
                         "creative_type": info.get("object_type", ""),
+                        "body": body,
+                        "headline": headline,
+                        "link_url": link_url,
+                        "video_id": video_id,
                     }
             except Exception:
                 pass
@@ -492,6 +534,32 @@ def get_demo_data() -> pd.DataFrame:
         "Flex", "Flex - Copy", "Winter Freedom", "Senior Sale",
     ]
 
+    bodies = [
+        "Transform your health with our premium supplements. Order now and get 50% off!",
+        "Join thousands of satisfied customers. Limited time offer - Buy 1 Get 1 Free!",
+        "Experience the difference with our all-natural formula. Shop now!",
+        "Don't miss out on our biggest sale of the year. Free shipping on all orders!",
+        "The secret to better wellness is here. Try it risk-free today!",
+    ]
+
+    headlines = [
+        "Limited Time Offer",
+        "Buy 1 Get 1 Free",
+        "Free Shipping Today",
+        "50% Off Sale",
+        "Shop Now & Save",
+        "Best Seller",
+        "New Arrival",
+    ]
+
+    landing_pages = [
+        "https://example.com/shop",
+        "https://example.com/offer",
+        "https://example.com/sale",
+        "https://example.com/products",
+        "https://example.com/special",
+    ]
+
     data = []
     for i in range(50):
         # Use same creative name for some ads (duplicates)
@@ -499,6 +567,8 @@ def get_demo_data() -> pd.DataFrame:
         spend = random.uniform(100, 2000)
         roas = random.uniform(1.5, 6.0)
         purchases = int(spend * roas / random.uniform(50, 120))
+        creative_type = random.choice(["IMAGE", "VIDEO"])
+        impressions = int(spend * random.uniform(50, 150))
 
         data.append({
             "ad_id": f"ad_{i+1}",
@@ -508,7 +578,7 @@ def get_demo_data() -> pd.DataFrame:
             "adset_id": f"adset_{(i % 10) + 1}",
             "adset_name": f"Adset {(i % 10) + 1}",
             "spend": round(spend, 2),
-            "impressions": int(spend * random.uniform(50, 150)),
+            "impressions": impressions,
             "clicks": int(spend * random.uniform(1, 5)),
             "purchases": purchases,
             "purchase_value": round(spend * roas, 2),
@@ -517,8 +587,14 @@ def get_demo_data() -> pd.DataFrame:
             "cpc": round(random.uniform(0.5, 2.0), 2),
             "cpm": round(random.uniform(20, 60), 2),
             "thumbnail_url": "",
-            "creative_type": random.choice(["IMAGE", "VIDEO"]),
+            "creative_type": creative_type,
             "account_id": random.choice(["act_830553234595972", "act_1079916799996214"]),
+            "body": random.choice(bodies),
+            "headline": random.choice(headlines),
+            "link_url": random.choice(landing_pages),
+            "video_id": f"video_{i+1}" if creative_type == "VIDEO" else "",
+            # For video hooks demo - 3 second views vs impressions
+            "video_3s_views": int(impressions * random.uniform(0.15, 0.45)) if creative_type == "VIDEO" else 0,
         })
 
     return pd.DataFrame(data)

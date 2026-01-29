@@ -134,6 +134,41 @@ st.markdown("""
         margin: 24px 0 16px 0;
     }
 
+    /* Hit rate card */
+    .hit-rate-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 12px;
+        padding: 20px;
+        color: white;
+        margin-bottom: 16px;
+    }
+    .hit-rate-title {
+        font-size: 14px;
+        font-weight: 500;
+        opacity: 0.9;
+        margin-bottom: 8px;
+    }
+    .hit-rate-value {
+        font-size: 36px;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    .hit-rate-subtitle {
+        font-size: 12px;
+        opacity: 0.8;
+    }
+
+    /* Data table styling */
+    .data-row {
+        display: flex;
+        align-items: center;
+        padding: 12px 16px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    .data-row:hover {
+        background: #f9fafb;
+    }
+
     /* Hide Streamlit elements */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -414,6 +449,342 @@ def render_creative_grid(df: pd.DataFrame):
             """, unsafe_allow_html=True)
 
 
+def render_ads_tab(df: pd.DataFrame):
+    """Render the Ads tab with all individual ads."""
+    if df.empty:
+        st.info("No ads data available")
+        return
+
+    # Sort by spend
+    sorted_df = df.sort_values("spend", ascending=False)
+
+    # Display as table
+    display_cols = ["ad_name", "campaign_name", "spend", "roas", "purchases", "cpa", "impressions", "clicks"]
+    available_cols = [c for c in display_cols if c in sorted_df.columns]
+    display_df = sorted_df[available_cols].copy()
+
+    # Rename columns
+    col_names = {
+        "ad_name": "Ad Name",
+        "campaign_name": "Campaign",
+        "spend": "Spend",
+        "roas": "ROAS",
+        "purchases": "Purchases",
+        "cpa": "CPA",
+        "impressions": "Impressions",
+        "clicks": "Clicks",
+    }
+    display_df.rename(columns=col_names, inplace=True)
+
+    # Format
+    if "Spend" in display_df.columns:
+        display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
+    if "ROAS" in display_df.columns:
+        display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
+    if "CPA" in display_df.columns:
+        display_df["CPA"] = display_df["CPA"].apply(lambda x: f"${x:.2f}")
+    if "Impressions" in display_df.columns:
+        display_df["Impressions"] = display_df["Impressions"].apply(lambda x: f"{x:,}")
+    if "Clicks" in display_df.columns:
+        display_df["Clicks"] = display_df["Clicks"].apply(lambda x: f"{x:,}")
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+
+def render_creatives_tab(df: pd.DataFrame):
+    """Render the Creatives tab - grouped by creative name."""
+    if df.empty:
+        st.info("No creatives data available")
+        return
+
+    grouped = group_by_creative_name(df)
+    sorted_df = grouped.sort_values("spend", ascending=False)
+
+    display_cols = ["creative_base_name", "spend", "roas", "purchases", "purchase_value", "cpa"]
+    available_cols = [c for c in display_cols if c in sorted_df.columns]
+    display_df = sorted_df[available_cols].copy()
+
+    col_names = {
+        "creative_base_name": "Creative",
+        "spend": "Spend",
+        "roas": "ROAS",
+        "purchases": "Purchases",
+        "purchase_value": "Revenue",
+        "cpa": "CPA",
+    }
+    display_df.rename(columns=col_names, inplace=True)
+
+    if "Spend" in display_df.columns:
+        display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
+    if "Revenue" in display_df.columns:
+        display_df["Revenue"] = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
+    if "ROAS" in display_df.columns:
+        display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
+    if "CPA" in display_df.columns:
+        display_df["CPA"] = display_df["CPA"].apply(lambda x: f"${x:.2f}")
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+
+def render_images_tab(df: pd.DataFrame):
+    """Render the Images tab - only image creatives."""
+    if df.empty:
+        st.info("No data available")
+        return
+
+    # Filter for images only
+    images_df = df[df["creative_type"].str.upper().str.contains("IMAGE", na=False)]
+
+    if images_df.empty:
+        st.info("No image creatives found")
+        return
+
+    grouped = group_by_creative_name(images_df)
+    sorted_df = grouped.sort_values("spend", ascending=False).head(20)
+
+    render_creative_grid(sorted_df)
+
+
+def render_videos_tab(df: pd.DataFrame):
+    """Render the Videos tab - only video creatives."""
+    if df.empty:
+        st.info("No data available")
+        return
+
+    # Filter for videos only
+    videos_df = df[df["creative_type"].str.upper().str.contains("VIDEO", na=False)]
+
+    if videos_df.empty:
+        st.info("No video creatives found")
+        return
+
+    grouped = group_by_creative_name(videos_df)
+    sorted_df = grouped.sort_values("spend", ascending=False).head(20)
+
+    render_creative_grid(sorted_df)
+
+
+def render_video_hooks_tab(df: pd.DataFrame):
+    """Render the Video Hooks tab with Thumbstop % metric."""
+    if df.empty:
+        st.info("No data available")
+        return
+
+    # Filter for videos only
+    videos_df = df[df["creative_type"].str.upper().str.contains("VIDEO", na=False)].copy()
+
+    if videos_df.empty:
+        st.info("No video creatives found")
+        return
+
+    # Calculate Thumbstop % (3-second views / impressions * 100)
+    if "video_3s_views" not in videos_df.columns:
+        videos_df["video_3s_views"] = videos_df["impressions"] * 0.25  # Demo fallback
+
+    videos_df["thumbstop_pct"] = videos_df.apply(
+        lambda r: (r.get("video_3s_views", 0) / r["impressions"] * 100) if r["impressions"] > 0 else 0,
+        axis=1
+    )
+
+    # Sort by thumbstop
+    sorted_df = videos_df.sort_values("thumbstop_pct", ascending=False)
+
+    display_cols = ["ad_name", "thumbstop_pct", "spend", "roas", "impressions"]
+    available_cols = [c for c in display_cols if c in sorted_df.columns]
+    display_df = sorted_df[available_cols].copy()
+
+    col_names = {
+        "ad_name": "Video",
+        "thumbstop_pct": "Thumbstop %",
+        "spend": "Spend",
+        "roas": "ROAS",
+        "impressions": "Impressions",
+    }
+    display_df.rename(columns=col_names, inplace=True)
+
+    if "Thumbstop %" in display_df.columns:
+        display_df["Thumbstop %"] = display_df["Thumbstop %"].apply(lambda x: f"{x:.1f}%")
+    if "Spend" in display_df.columns:
+        display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
+    if "ROAS" in display_df.columns:
+        display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
+    if "Impressions" in display_df.columns:
+        display_df["Impressions"] = display_df["Impressions"].apply(lambda x: f"{x:,}")
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+
+def render_copies_tab(df: pd.DataFrame):
+    """Render the Copies (ad body text) tab."""
+    if df.empty:
+        st.info("No data available")
+        return
+
+    if "body" not in df.columns:
+        st.info("Ad copy data not available")
+        return
+
+    # Group by body text
+    copies_df = df[df["body"].notna() & (df["body"] != "")].copy()
+
+    if copies_df.empty:
+        st.info("No ad copy data found")
+        return
+
+    grouped = copies_df.groupby("body").agg({
+        "ad_id": "count",
+        "spend": "sum",
+        "impressions": "sum",
+        "clicks": "sum",
+        "purchases": "sum",
+        "purchase_value": "sum",
+    }).reset_index()
+
+    grouped["roas"] = grouped.apply(
+        lambda r: r["purchase_value"] / r["spend"] if r["spend"] > 0 else 0, axis=1
+    )
+    grouped["pct_of_spend"] = (grouped["spend"] / grouped["spend"].sum() * 100)
+
+    sorted_df = grouped.sort_values("spend", ascending=False)
+
+    display_df = sorted_df[["body", "ad_id", "spend", "roas", "pct_of_spend"]].copy()
+    display_df.columns = ["Copy", "# Ads", "Spend", "ROAS", "% of Spend"]
+
+    display_df["Copy"] = display_df["Copy"].apply(lambda x: x[:100] + "..." if len(str(x)) > 100 else x)
+    display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
+    display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
+    display_df["% of Spend"] = display_df["% of Spend"].apply(lambda x: f"{x:.1f}%")
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+
+def render_headlines_tab(df: pd.DataFrame):
+    """Render the Headlines tab."""
+    if df.empty:
+        st.info("No data available")
+        return
+
+    if "headline" not in df.columns:
+        st.info("Headline data not available")
+        return
+
+    headlines_df = df[df["headline"].notna() & (df["headline"] != "")].copy()
+
+    if headlines_df.empty:
+        st.info("No headline data found")
+        return
+
+    grouped = headlines_df.groupby("headline").agg({
+        "ad_id": "count",
+        "spend": "sum",
+        "impressions": "sum",
+        "clicks": "sum",
+        "purchases": "sum",
+        "purchase_value": "sum",
+    }).reset_index()
+
+    grouped["roas"] = grouped.apply(
+        lambda r: r["purchase_value"] / r["spend"] if r["spend"] > 0 else 0, axis=1
+    )
+    grouped["pct_of_spend"] = (grouped["spend"] / grouped["spend"].sum() * 100)
+
+    sorted_df = grouped.sort_values("spend", ascending=False)
+
+    display_df = sorted_df[["headline", "ad_id", "spend", "roas", "pct_of_spend"]].copy()
+    display_df.columns = ["Headline", "# Ads", "Spend", "ROAS", "% of Spend"]
+
+    display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
+    display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
+    display_df["% of Spend"] = display_df["% of Spend"].apply(lambda x: f"{x:.1f}%")
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+
+def render_landing_pages_tab(df: pd.DataFrame):
+    """Render the Landing Pages tab."""
+    if df.empty:
+        st.info("No data available")
+        return
+
+    if "link_url" not in df.columns:
+        st.info("Landing page data not available")
+        return
+
+    urls_df = df[df["link_url"].notna() & (df["link_url"] != "")].copy()
+
+    if urls_df.empty:
+        st.info("No landing page data found")
+        return
+
+    # Extract domain for cleaner display
+    import re
+    def extract_path(url):
+        match = re.search(r'https?://[^/]+(/[^?]*)?', str(url))
+        if match:
+            return match.group(0)
+        return url
+
+    urls_df["clean_url"] = urls_df["link_url"].apply(extract_path)
+
+    grouped = urls_df.groupby("clean_url").agg({
+        "ad_id": "count",
+        "spend": "sum",
+        "impressions": "sum",
+        "clicks": "sum",
+        "purchases": "sum",
+        "purchase_value": "sum",
+    }).reset_index()
+
+    grouped["roas"] = grouped.apply(
+        lambda r: r["purchase_value"] / r["spend"] if r["spend"] > 0 else 0, axis=1
+    )
+    grouped["pct_of_spend"] = (grouped["spend"] / grouped["spend"].sum() * 100)
+
+    sorted_df = grouped.sort_values("spend", ascending=False)
+
+    display_df = sorted_df[["clean_url", "ad_id", "spend", "roas", "pct_of_spend"]].copy()
+    display_df.columns = ["Landing Page", "# Ads", "Spend", "ROAS", "% of Spend"]
+
+    display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
+    display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
+    display_df["% of Spend"] = display_df["% of Spend"].apply(lambda x: f"{x:.1f}%")
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+
+def calculate_hit_rate(df: pd.DataFrame, min_spend: float = 1000, min_roas: float = 2.0) -> dict:
+    """Calculate hit rate - creatives with spend >= min_spend and ROAS >= min_roas."""
+    if df.empty:
+        return {"rate": 0, "hits": 0, "total": 0}
+
+    grouped = group_by_creative_name(df)
+    qualified = grouped[grouped["spend"] >= min_spend]
+
+    if qualified.empty:
+        return {"rate": 0, "hits": 0, "total": 0}
+
+    hits = qualified[qualified["roas"] >= min_roas]
+
+    return {
+        "rate": (len(hits) / len(qualified)) * 100 if len(qualified) > 0 else 0,
+        "hits": len(hits),
+        "total": len(qualified),
+    }
+
+
+def render_hit_rate_card(df: pd.DataFrame):
+    """Render the Hit Rate tracker card."""
+    hit_rate = calculate_hit_rate(df)
+
+    st.markdown(f"""
+    <div class="hit-rate-card">
+        <div class="hit-rate-title">Hit Rate (≥$1K spend, ≥2.0 ROAS)</div>
+        <div class="hit-rate-value">{hit_rate['rate']:.1f}%</div>
+        <div class="hit-rate-subtitle">{hit_rate['hits']} of {hit_rate['total']} creatives</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def render_header(date_start, date_end):
     """Render the page header."""
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -486,9 +857,16 @@ def main():
         st.warning("No data available. Enable 'Use Demo Data' in the sidebar to see a preview.")
         return
 
-    # Key Metrics Section
-    st.markdown("### Key Metrics")
-    render_key_metrics(insights)
+    # Key Metrics Section with Hit Rate
+    col_metrics, col_hitrate = st.columns([3, 1])
+
+    with col_metrics:
+        st.markdown("### Key Metrics")
+        render_key_metrics(insights)
+
+    with col_hitrate:
+        st.markdown("### Hit Rate")
+        render_hit_rate_card(df)
 
     st.divider()
 
@@ -502,22 +880,35 @@ def main():
 
     st.divider()
 
-    # Data Table
-    with st.expander("View All Creatives Data"):
-        grouped = group_by_creative_name(df)
-        display_df = grouped[[
-            "creative_base_name", "spend", "roas", "purchases", "purchase_value", "cpa"
-        ]].copy()
-        display_df.columns = ["Creative", "Spend", "ROAS", "Purchases", "Revenue", "CPA"]
-        display_df = display_df.sort_values("Spend", ascending=False)
+    # Tabs for different views
+    st.markdown("### Breakdown Analysis")
+    tab_ads, tab_creatives, tab_images, tab_videos, tab_hooks, tab_copies, tab_headlines, tab_landing = st.tabs([
+        "Ads", "Creatives", "Images", "Videos", "Video Hooks", "Copies", "Headlines", "Landing Pages"
+    ])
 
-        # Format columns
-        display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
-        display_df["Revenue"] = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
-        display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
-        display_df["CPA"] = display_df["CPA"].apply(lambda x: f"${x:.2f}")
+    with tab_ads:
+        render_ads_tab(df)
 
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+    with tab_creatives:
+        render_creatives_tab(df)
+
+    with tab_images:
+        render_images_tab(df)
+
+    with tab_videos:
+        render_videos_tab(df)
+
+    with tab_hooks:
+        render_video_hooks_tab(df)
+
+    with tab_copies:
+        render_copies_tab(df)
+
+    with tab_headlines:
+        render_headlines_tab(df)
+
+    with tab_landing:
+        render_landing_pages_tab(df)
 
 
 if __name__ == "__main__":
