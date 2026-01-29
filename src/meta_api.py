@@ -2,7 +2,7 @@
 
 import os
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import pandas as pd
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
@@ -16,16 +16,12 @@ load_dotenv()
 
 def get_available_ad_accounts() -> list:
     """Get list of available ad account IDs from environment."""
-    # Check for multiple accounts first
     multi_accounts = os.getenv("META_AD_ACCOUNT_IDS", "")
     if multi_accounts:
         return [acc.strip() for acc in multi_accounts.split(",") if acc.strip()]
-
-    # Fall back to single account
     single_account = os.getenv("META_AD_ACCOUNT_ID", "")
     if single_account:
         return [single_account]
-
     return []
 
 
@@ -39,12 +35,10 @@ class MetaAdsClient:
         access_token: Optional[str] = None,
         ad_account_id: Optional[str] = None,
     ):
-        """Initialize the Meta Ads API client."""
         self.app_id = app_id or os.getenv("META_APP_ID")
         self.app_secret = app_secret or os.getenv("META_APP_SECRET")
         self.access_token = access_token or os.getenv("META_ACCESS_TOKEN")
 
-        # Get ad account - use provided one or first from list
         if ad_account_id:
             self.ad_account_id = ad_account_id
         else:
@@ -53,21 +47,27 @@ class MetaAdsClient:
 
         self._api = None
         self._account = None
+        self._initialized = False
 
     def is_configured(self) -> bool:
-        """Check if API credentials are configured."""
-        return all([
-            self.app_id,
-            self.app_secret,
-            self.access_token,
-            self.ad_account_id,
-        ])
+        return all([self.app_id, self.app_secret, self.access_token, self.ad_account_id])
+
+    def _ensure_initialized(self):
+        """Ensure API is initialized."""
+        if not self._initialized and self.access_token:
+            try:
+                FacebookAdsApi.init(
+                    app_id=self.app_id,
+                    app_secret=self.app_secret,
+                    access_token=self.access_token,
+                )
+                self._initialized = True
+            except Exception:
+                pass
 
     def connect(self) -> bool:
-        """Initialize the API connection."""
         if not self.is_configured():
             return False
-
         try:
             FacebookAdsApi.init(
                 app_id=self.app_id,
@@ -76,15 +76,14 @@ class MetaAdsClient:
             )
             self._api = FacebookAdsApi.get_default_api()
             self._account = AdAccount(self.ad_account_id)
-            # Test the connection
             self._account.api_get(fields=["name"])
+            self._initialized = True
             return True
         except Exception as e:
             print(f"Failed to connect to Meta API: {e}")
             return False
 
     def get_account_name(self) -> str:
-        """Get the ad account name."""
         if not self._account:
             return "Not connected"
         try:
@@ -93,198 +92,283 @@ class MetaAdsClient:
         except Exception:
             return "Unknown"
 
+    def fetch_account_insights(
+        self,
+        date_start: datetime,
+        date_end: datetime,
+    ) -> Dict[str, Any]:
+        """Fetch account-level insights for the date range."""
+        if not self._account:
+            raise ConnectionError("Not connected to Meta API")
+
+        time_range = {
+            "since": date_start.strftime("%Y-%m-%d"),
+            "until": date_end.strftime("%Y-%m-%d"),
+        }
+
+        try:
+            insights = self._account.get_insights(
+                fields=[
+                    "spend",
+                    "impressions",
+                    "clicks",
+                    "cpc",
+                    "cpm",
+                    "ctr",
+                    "actions",
+                    "action_values",
+                    "purchase_roas",
+                    "cost_per_action_type",
+                ],
+                params={"time_range": time_range}
+            )
+
+            if not insights:
+                return {}
+
+            data = insights[0]
+            spend = float(data.get("spend", 0))
+            impressions = int(data.get("impressions", 0))
+            clicks = int(data.get("clicks", 0))
+            cpc = float(data.get("cpc", 0))
+            cpm = float(data.get("cpm", 0))
+
+            # Extract purchases and value
+            purchases = 0
+            purchase_value = 0
+            actions = data.get("actions", [])
+            for action in actions:
+                if action.get("action_type") == "purchase":
+                    purchases = int(action.get("value", 0))
+                    break
+
+            action_values = data.get("action_values", [])
+            for av in action_values:
+                if av.get("action_type") == "purchase":
+                    purchase_value = float(av.get("value", 0))
+                    break
+
+            # ROAS
+            roas = 0
+            purchase_roas = data.get("purchase_roas", [])
+            if purchase_roas:
+                roas = float(purchase_roas[0].get("value", 0))
+            elif spend > 0:
+                roas = purchase_value / spend
+
+            # CPA
+            cpa = 0
+            cost_per_action = data.get("cost_per_action_type", [])
+            for cpa_data in cost_per_action:
+                if cpa_data.get("action_type") == "purchase":
+                    cpa = float(cpa_data.get("value", 0))
+                    break
+
+            # AOV
+            aov = purchase_value / purchases if purchases > 0 else 0
+
+            return {
+                "spend": spend,
+                "impressions": impressions,
+                "clicks": clicks,
+                "purchases": purchases,
+                "purchase_value": purchase_value,
+                "roas": roas,
+                "cpa": cpa,
+                "aov": aov,
+                "cpc": cpc,
+                "cpm": cpm,
+            }
+
+        except Exception as e:
+            print(f"Error fetching account insights: {e}")
+            return {}
+
+    def fetch_daily_insights(
+        self,
+        date_start: datetime,
+        date_end: datetime,
+    ) -> pd.DataFrame:
+        """Fetch daily account insights for sparklines."""
+        if not self._account:
+            raise ConnectionError("Not connected to Meta API")
+
+        time_range = {
+            "since": date_start.strftime("%Y-%m-%d"),
+            "until": date_end.strftime("%Y-%m-%d"),
+        }
+
+        try:
+            insights = self._account.get_insights(
+                fields=[
+                    "spend",
+                    "impressions",
+                    "clicks",
+                    "actions",
+                    "action_values",
+                    "purchase_roas",
+                ],
+                params={
+                    "time_range": time_range,
+                    "time_increment": 1,  # Daily breakdown
+                }
+            )
+
+            daily_data = []
+            for day in insights:
+                spend = float(day.get("spend", 0))
+
+                purchases = 0
+                purchase_value = 0
+                for action in day.get("actions", []):
+                    if action.get("action_type") == "purchase":
+                        purchases = int(action.get("value", 0))
+                        break
+                for av in day.get("action_values", []):
+                    if av.get("action_type") == "purchase":
+                        purchase_value = float(av.get("value", 0))
+                        break
+
+                roas = 0
+                purchase_roas = day.get("purchase_roas", [])
+                if purchase_roas:
+                    roas = float(purchase_roas[0].get("value", 0))
+                elif spend > 0:
+                    roas = purchase_value / spend
+
+                daily_data.append({
+                    "date": day.get("date_start"),
+                    "spend": spend,
+                    "roas": roas,
+                    "purchases": purchases,
+                    "purchase_value": purchase_value,
+                })
+
+            return pd.DataFrame(daily_data)
+
+        except Exception as e:
+            print(f"Error fetching daily insights: {e}")
+            return pd.DataFrame()
+
     def fetch_ads_data(
         self,
         date_start: Optional[datetime] = None,
         date_end: Optional[datetime] = None,
         limit: int = 500,
     ) -> pd.DataFrame:
-        """
-        Fetch all ads with their performance metrics.
-
-        Returns a DataFrame with columns:
-        - ad_id, ad_name, campaign_id, campaign_name, adset_id, adset_name
-        - creative_id, creative_type, thumbnail_url, primary_text, headline
-        - objective, spend, impressions, clicks, conversions, roas
-        - date_start, date_end
-        """
+        """Fetch all ads with their performance metrics."""
         if not self._account:
             raise ConnectionError("Not connected to Meta API")
 
-        # Default to last 30 days
         if not date_end:
             date_end = datetime.now()
         if not date_start:
             date_start = date_end - timedelta(days=30)
 
-        date_preset = None
         time_range = {
             "since": date_start.strftime("%Y-%m-%d"),
             "until": date_end.strftime("%Y-%m-%d"),
         }
 
-        # Fetch ads with insights
         ads_data = []
 
         try:
-            # Get all ads
-            ads = self._account.get_ads(
+            # Get ads with insights in one call for efficiency
+            ads = self._account.get_insights(
                 fields=[
-                    Ad.Field.id,
-                    Ad.Field.name,
-                    Ad.Field.campaign_id,
-                    Ad.Field.adset_id,
-                    Ad.Field.creative,
-                    Ad.Field.status,
-                    Ad.Field.created_time,
+                    "ad_id",
+                    "ad_name",
+                    "campaign_id",
+                    "campaign_name",
+                    "adset_id",
+                    "adset_name",
+                    "spend",
+                    "impressions",
+                    "clicks",
+                    "cpc",
+                    "cpm",
+                    "actions",
+                    "action_values",
+                    "purchase_roas",
+                    "cost_per_action_type",
                 ],
                 params={
+                    "time_range": time_range,
+                    "level": "ad",
                     "limit": limit,
-                    "date_preset": "last_30d",
                 }
             )
 
-            # Build campaign and adset lookup
-            campaigns = {}
-            adsets = {}
+            # Collect ad IDs to fetch creative info
+            ad_ids = []
+            ads_list = list(ads)
 
-            for ad in ads:
-                ad_id = ad.get("id")
-                campaign_id = ad.get("campaign_id")
-                adset_id = ad.get("adset_id")
-                creative_data = ad.get("creative", {})
-                creative_id = creative_data.get("id") if creative_data else None
+            for ad_data in ads_list:
+                ad_id = ad_data.get("ad_id")
+                spend = float(ad_data.get("spend", 0))
+                impressions = int(ad_data.get("impressions", 0))
+                clicks = int(ad_data.get("clicks", 0))
+                cpc = float(ad_data.get("cpc", 0)) if ad_data.get("cpc") else 0
+                cpm = float(ad_data.get("cpm", 0)) if ad_data.get("cpm") else 0
 
-                # Fetch campaign details if not cached
-                if campaign_id and campaign_id not in campaigns:
-                    try:
-                        campaign = Campaign(campaign_id)
-                        campaign_info = campaign.api_get(fields=["name", "objective"])
-                        campaigns[campaign_id] = {
-                            "name": campaign_info.get("name", ""),
-                            "objective": campaign_info.get("objective", ""),
-                        }
-                    except Exception:
-                        campaigns[campaign_id] = {"name": "", "objective": ""}
-
-                # Fetch adset name if not cached
-                if adset_id and adset_id not in adsets:
-                    try:
-                        from facebook_business.adobjects.adset import AdSet
-                        adset = AdSet(adset_id)
-                        adset_info = adset.api_get(fields=["name"])
-                        adsets[adset_id] = adset_info.get("name", "")
-                    except Exception:
-                        adsets[adset_id] = ""
-
-                # Fetch creative details
-                creative_type = ""
-                thumbnail_url = ""
-                primary_text = ""
-                headline = ""
-                image_url = ""
-                video_id = ""
-
-                if creative_id:
-                    try:
-                        creative = AdCreative(creative_id)
-                        creative_info = creative.api_get(fields=[
-                            "object_type",
-                            "thumbnail_url",
-                            "body",
-                            "title",
-                            "image_url",
-                            "video_id",
-                            "asset_feed_spec",
-                        ])
-                        creative_type = creative_info.get("object_type", "")
-                        thumbnail_url = creative_info.get("thumbnail_url", "")
-                        primary_text = creative_info.get("body", "")
-                        headline = creative_info.get("title", "")
-                        image_url = creative_info.get("image_url", "")
-                        video_id = creative_info.get("video_id", "")
-                    except Exception:
-                        pass
-
-                # Fetch insights for this ad
-                spend = 0
-                impressions = 0
-                clicks = 0
-                conversions = 0
+                # Extract purchases
+                purchases = 0
                 purchase_value = 0
+                for action in ad_data.get("actions", []):
+                    if action.get("action_type") == "purchase":
+                        purchases = int(action.get("value", 0))
+                        break
+                for av in ad_data.get("action_values", []):
+                    if av.get("action_type") == "purchase":
+                        purchase_value = float(av.get("value", 0))
+                        break
+
+                # ROAS
                 roas = 0
+                purchase_roas = ad_data.get("purchase_roas", [])
+                if purchase_roas:
+                    roas = float(purchase_roas[0].get("value", 0))
+                elif spend > 0:
+                    roas = purchase_value / spend
 
-                try:
-                    insights = Ad(ad_id).get_insights(
-                        fields=[
-                            "spend",
-                            "impressions",
-                            "clicks",
-                            "actions",
-                            "action_values",
-                            "purchase_roas",
-                        ],
-                        params={
-                            "time_range": time_range,
-                        }
-                    )
-                    if insights:
-                        insight = insights[0]
-                        spend = float(insight.get("spend", 0))
-                        impressions = int(insight.get("impressions", 0))
-                        clicks = int(insight.get("clicks", 0))
-
-                        # Extract conversions from actions
-                        actions = insight.get("actions", [])
-                        for action in actions:
-                            if action.get("action_type") == "purchase":
-                                conversions = int(action.get("value", 0))
-                                break
-
-                        # Extract purchase value
-                        action_values = insight.get("action_values", [])
-                        for av in action_values:
-                            if av.get("action_type") == "purchase":
-                                purchase_value = float(av.get("value", 0))
-                                break
-
-                        # Get ROAS
-                        purchase_roas = insight.get("purchase_roas", [])
-                        if purchase_roas:
-                            roas = float(purchase_roas[0].get("value", 0))
-                        elif spend > 0:
-                            roas = purchase_value / spend
-                except Exception:
-                    pass
-
-                campaign_info = campaigns.get(campaign_id, {})
+                # CPA
+                cpa = 0
+                for cpa_data in ad_data.get("cost_per_action_type", []):
+                    if cpa_data.get("action_type") == "purchase":
+                        cpa = float(cpa_data.get("value", 0))
+                        break
 
                 ads_data.append({
                     "ad_id": ad_id,
-                    "ad_name": ad.get("name", ""),
-                    "campaign_id": campaign_id,
-                    "campaign_name": campaign_info.get("name", ""),
-                    "objective": campaign_info.get("objective", ""),
-                    "adset_id": adset_id,
-                    "adset_name": adsets.get(adset_id, ""),
-                    "creative_id": creative_id,
-                    "creative_type": creative_type,
-                    "thumbnail_url": thumbnail_url,
-                    "image_url": image_url,
-                    "video_id": video_id,
-                    "primary_text": primary_text,
-                    "headline": headline,
-                    "status": ad.get("status", ""),
-                    "created_time": ad.get("created_time", ""),
+                    "ad_name": ad_data.get("ad_name", ""),
+                    "campaign_id": ad_data.get("campaign_id", ""),
+                    "campaign_name": ad_data.get("campaign_name", ""),
+                    "adset_id": ad_data.get("adset_id", ""),
+                    "adset_name": ad_data.get("adset_name", ""),
                     "spend": spend,
                     "impressions": impressions,
                     "clicks": clicks,
-                    "conversions": conversions,
+                    "purchases": purchases,
                     "purchase_value": purchase_value,
                     "roas": roas,
-                    "date_start": date_start.strftime("%Y-%m-%d"),
-                    "date_end": date_end.strftime("%Y-%m-%d"),
+                    "cpa": cpa,
+                    "cpc": cpc,
+                    "cpm": cpm,
+                    "account_id": self.ad_account_id,
                 })
+                ad_ids.append(ad_id)
+
+            # Fetch creative details for each ad
+            creative_info = self._fetch_creative_info(ad_ids)
+
+            # Merge creative info
+            for ad in ads_data:
+                ad_id = ad["ad_id"]
+                if ad_id in creative_info:
+                    ad.update(creative_info[ad_id])
+                else:
+                    ad["thumbnail_url"] = ""
+                    ad["creative_type"] = ""
 
         except Exception as e:
             print(f"Error fetching ads: {e}")
@@ -292,50 +376,165 @@ class MetaAdsClient:
 
         return pd.DataFrame(ads_data)
 
+    def _fetch_creative_info(self, ad_ids: List[str]) -> Dict[str, Dict]:
+        """Fetch creative info (thumbnails) for ads."""
+        creative_info = {}
+
+        for ad_id in ad_ids[:50]:  # Limit to avoid rate limits
+            try:
+                ad = Ad(ad_id)
+                ad_data = ad.api_get(fields=["creative"])
+                creative_data = ad_data.get("creative", {})
+                creative_id = creative_data.get("id")
+
+                if creative_id:
+                    creative = AdCreative(creative_id)
+                    info = creative.api_get(fields=[
+                        "thumbnail_url",
+                        "object_type",
+                        "image_url",
+                    ])
+                    creative_info[ad_id] = {
+                        "thumbnail_url": info.get("thumbnail_url") or info.get("image_url", ""),
+                        "creative_type": info.get("object_type", ""),
+                    }
+            except Exception:
+                pass
+
+        return creative_info
+
+
+def fetch_all_accounts_data(
+    date_start: datetime,
+    date_end: datetime,
+) -> pd.DataFrame:
+    """Fetch and combine data from all configured ad accounts."""
+    accounts = get_available_ad_accounts()
+    all_data = []
+
+    for account_id in accounts:
+        try:
+            client = MetaAdsClient(ad_account_id=account_id)
+            if client.connect():
+                df = client.fetch_ads_data(date_start, date_end)
+                if not df.empty:
+                    all_data.append(df)
+        except Exception as e:
+            print(f"Error fetching from {account_id}: {e}")
+
+    if all_data:
+        return pd.concat(all_data, ignore_index=True)
+    return pd.DataFrame()
+
+
+def fetch_all_accounts_insights(
+    date_start: datetime,
+    date_end: datetime,
+) -> Dict[str, Any]:
+    """Fetch and combine account-level insights from all accounts."""
+    accounts = get_available_ad_accounts()
+    combined = {
+        "spend": 0,
+        "impressions": 0,
+        "clicks": 0,
+        "purchases": 0,
+        "purchase_value": 0,
+        "cpc": 0,
+        "cpm": 0,
+    }
+
+    valid_accounts = 0
+    for account_id in accounts:
+        try:
+            client = MetaAdsClient(ad_account_id=account_id)
+            if client.connect():
+                insights = client.fetch_account_insights(date_start, date_end)
+                if insights:
+                    combined["spend"] += insights.get("spend", 0)
+                    combined["impressions"] += insights.get("impressions", 0)
+                    combined["clicks"] += insights.get("clicks", 0)
+                    combined["purchases"] += insights.get("purchases", 0)
+                    combined["purchase_value"] += insights.get("purchase_value", 0)
+                    valid_accounts += 1
+        except Exception as e:
+            print(f"Error fetching insights from {account_id}: {e}")
+
+    # Calculate derived metrics
+    if combined["spend"] > 0:
+        combined["roas"] = combined["purchase_value"] / combined["spend"]
+        combined["cpm"] = (combined["spend"] / combined["impressions"] * 1000) if combined["impressions"] > 0 else 0
+    else:
+        combined["roas"] = 0
+        combined["cpm"] = 0
+
+    if combined["clicks"] > 0:
+        combined["cpc"] = combined["spend"] / combined["clicks"]
+    else:
+        combined["cpc"] = 0
+
+    if combined["purchases"] > 0:
+        combined["cpa"] = combined["spend"] / combined["purchases"]
+        combined["aov"] = combined["purchase_value"] / combined["purchases"]
+    else:
+        combined["cpa"] = 0
+        combined["aov"] = 0
+
+    return combined
+
 
 def get_demo_data() -> pd.DataFrame:
-    """Generate demo data for testing without API credentials."""
+    """Generate demo data for testing."""
     import random
 
-    formats = ["VIDEO", "IMAGE", "CAROUSEL"]
-    objectives = ["OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_AWARENESS"]
-    angles = ["Problem/Solution", "UGC Style", "Product Demo", "Social Proof", "Before/After"]
-    creators = ["Sarah", "Mike", "Team", "Agency", "Influencer"]
+    creative_names = [
+        "3554_PK_IMG_B1G1", "3951_PK_IMG_B1G1", "5444_PK_VID_KASDAVA",
+        "3302_PK_IMG_B1G1", "5160_PK_B1G1_h1", "3532_PK_IMG_B1G1",
+        "Flex", "Flex - Copy", "Winter Freedom", "Senior Sale",
+    ]
 
     data = []
     for i in range(50):
-        spend = random.uniform(50, 5000)
-        roas = random.uniform(0.5, 6.0)
-        format_type = random.choice(formats)
-        objective = random.choice(objectives)
+        # Use same creative name for some ads (duplicates)
+        creative_name = random.choice(creative_names)
+        spend = random.uniform(100, 2000)
+        roas = random.uniform(1.5, 6.0)
+        purchases = int(spend * roas / random.uniform(50, 120))
 
         data.append({
             "ad_id": f"ad_{i+1}",
-            "ad_name": f"Ad Creative {i+1}",
+            "ad_name": f"{creative_name}_{random.randint(1,5)}",
             "campaign_id": f"camp_{(i % 5) + 1}",
             "campaign_name": f"Campaign {(i % 5) + 1}",
-            "objective": objective,
             "adset_id": f"adset_{(i % 10) + 1}",
             "adset_name": f"Adset {(i % 10) + 1}",
-            "creative_id": f"creative_{i+1}",
-            "creative_type": format_type,
-            "thumbnail_url": "",
-            "image_url": "",
-            "video_id": "",
-            "primary_text": f"Check out our amazing product! Limited time offer.",
-            "headline": f"Get 50% Off Today",
-            "status": "ACTIVE",
-            "created_time": (datetime.now() - timedelta(days=random.randint(1, 60))).isoformat(),
             "spend": round(spend, 2),
             "impressions": int(spend * random.uniform(50, 150)),
             "clicks": int(spend * random.uniform(1, 5)),
-            "conversions": int(spend * roas / random.uniform(30, 100)),
+            "purchases": purchases,
             "purchase_value": round(spend * roas, 2),
             "roas": round(roas, 2),
-            "date_start": (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
-            "date_end": datetime.now().strftime("%Y-%m-%d"),
-            "angle": random.choice(angles),
-            "creator": random.choice(creators),
+            "cpa": round(spend / purchases, 2) if purchases > 0 else 0,
+            "cpc": round(random.uniform(0.5, 2.0), 2),
+            "cpm": round(random.uniform(20, 60), 2),
+            "thumbnail_url": "",
+            "creative_type": random.choice(["IMAGE", "VIDEO"]),
+            "account_id": random.choice(["act_830553234595972", "act_1079916799996214"]),
         })
 
     return pd.DataFrame(data)
+
+
+def get_demo_insights() -> Dict[str, Any]:
+    """Generate demo insights."""
+    return {
+        "spend": 75830,
+        "impressions": 2150000,
+        "clicks": 87200,
+        "purchases": 1536,
+        "purchase_value": 134730,
+        "roas": 1.78,
+        "cpa": 49.43,
+        "aov": 87.83,
+        "cpc": 0.87,
+        "cpm": 35.44,
+    }
