@@ -633,23 +633,26 @@ def render_winners_table(df: pd.DataFrame, min_roas: float = 2.0):
 
 
 def render_losers_table(df: pd.DataFrame, min_roas: float = 2.0):
-    """Render underperforming creatives table."""
+    """Render underperforming creatives table based on aggregated unique creatives."""
     if df.empty:
         st.info("No data available")
         return
 
+    # Aggregate by unique creative first
+    creative_df = aggregate_by_creative(df)
+
     # Filter for losers (high spend, low ROAS)
-    qualified = df[df["spend"] >= 1000]
+    qualified = creative_df[creative_df["spend"] >= 1000]
     losers = qualified[qualified["roas"] < min_roas].copy()
 
     if losers.empty:
-        st.success("No underperforming ads found!")
+        st.success("No underperforming creatives found!")
         return
 
     losers = losers.sort_values("spend", ascending=False)
 
     display_df = losers[["ad_name", "spend", "roas", "purchases", "purchase_value"]].head(20).copy()
-    display_df.columns = ["Ad Name", "Spend", "ROAS", "Purchases", "Revenue"]
+    display_df.columns = ["Creative Name", "Spend", "ROAS", "Purchases", "Revenue"]
     display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
     display_df["Revenue"] = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
     display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
