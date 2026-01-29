@@ -354,9 +354,9 @@ def calculate_monthly_stats(df: pd.DataFrame, min_spend: float = 1000, min_roas:
 
     Key logic:
     - Aggregate all ads by creative name first
-    - Count unique creatives
-    - Calculate winners based on aggregated creative performance
-    - Win rate = winners / qualified creatives (not individual ads)
+    - Count unique creatives launched
+    - Winners = creatives with ≥min_spend AND ≥min_roas
+    - Win rate = winners / total unique creatives (how many we launch that hit KPIs)
     """
     if df.empty:
         return {
@@ -371,22 +371,19 @@ def calculate_monthly_stats(df: pd.DataFrame, min_spend: float = 1000, min_roas:
     # Aggregate by unique creative name
     creative_df = aggregate_by_creative(df)
 
-    # Count unique creatives
+    # Count unique creatives launched
     unique_creatives = len(creative_df)
 
-    # Qualified creatives = those with >= min_spend (aggregated)
-    qualified = creative_df[creative_df["spend"] >= min_spend]
+    # Winners = creatives that hit BOTH KPIs (≥min_spend AND ≥min_roas)
+    winners = creative_df[(creative_df["spend"] >= min_spend) & (creative_df["roas"] >= min_roas)]
 
-    # Winners = qualified creatives with >= min_roas (after aggregation)
-    winners = qualified[qualified["roas"] >= min_roas]
-
-    # Win rate based on qualified unique creatives
-    win_rate = (len(winners) / len(qualified) * 100) if len(qualified) > 0 else 0
+    # Win rate = winners / total creatives launched
+    # This shows: of all creatives we launch, how many hit our KPIs
+    win_rate = (len(winners) / unique_creatives * 100) if unique_creatives > 0 else 0
 
     return {
         "total_ads": len(df),  # Raw ad count
         "unique_creatives": unique_creatives,  # Unique creative count
-        "qualified_creatives": len(qualified),
         "winners": len(winners),
         "win_rate": win_rate,
         "total_spend": creative_df["spend"].sum(),
@@ -512,11 +509,10 @@ def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 
         )
 
     with col3:
-        qualified = current_stats.get('qualified_creatives', 0)
         render_overview_card(
             "WIN RATE",
             f"{current_stats['win_rate']:.1f}%",
-            f"{current_stats['winners']}/{qualified} qualified",
+            f"{current_stats['winners']}/{current_stats['unique_creatives']} creatives",
             winrate_change
         )
 
@@ -536,8 +532,11 @@ def render_monthly_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
 
     st.markdown("### Monthly Performance")
 
+    # Get current month stats
+    stats = calculate_monthly_stats(df, min_spend=1000, min_roas=min_roas)
+
     # For demo, create monthly breakdown
-    # In real implementation, would need to fetch historical data
+    # In real implementation, would need to fetch historical data per month
     now = datetime.now()
     months_data = []
 
@@ -547,14 +546,19 @@ def render_monthly_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
 
         # Simulate declining data for older months (demo)
         factor = 1 - (i * 0.1)
-        stats = calculate_monthly_stats(df, min_spend=1000, min_roas=min_roas)
+        new_ads = int(stats["unique_creatives"] * factor)
+        winners = int(stats["winners"] * factor)
+        total_spend = stats["total_spend"] * factor
+
+        # Win rate = winners / new_ads (correct formula)
+        win_rate = (winners / new_ads * 100) if new_ads > 0 else 0
 
         months_data.append({
             "Month": month_name,
-            "New Ads": int(stats["unique_creatives"] * factor),
-            "Total Spend": format_currency(stats["total_spend"] * factor),
-            "Winners": int(stats["winners"] * factor),
-            "Win Rate": f"{stats['win_rate'] * factor:.1f}%",
+            "New Ads": new_ads,
+            "Total Spend": format_currency(total_spend),
+            "Winners": winners,
+            "Win Rate": f"{win_rate:.1f}%",
             "Blended ROAS": f"{stats['avg_roas'] * (0.9 + i * 0.05):.2f}",
         })
 
@@ -588,14 +592,16 @@ def render_format_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
     formats = []
     for fmt in creative_df["format"].unique():
         fmt_df = creative_df[creative_df["format"] == fmt]
-        qualified = fmt_df[fmt_df["spend"] >= 1000]
-        winners = qualified[qualified["roas"] >= min_roas]
+        # Winners = creatives with ≥$1K spend AND ≥min_roas
+        winners = fmt_df[(fmt_df["spend"] >= 1000) & (fmt_df["roas"] >= min_roas)]
+        # Win rate = winners / total creatives in this format
+        win_rate = (len(winners) / len(fmt_df) * 100) if len(fmt_df) > 0 else 0
 
         formats.append({
             "Name": fmt,
             "Creatives": len(fmt_df),
             "Winners": len(winners),
-            "Win Rate": f"{(len(winners) / len(qualified) * 100) if len(qualified) > 0 else 0:.1f}%",
+            "Win Rate": f"{win_rate:.1f}%",
             "Spend": format_currency(fmt_df["spend"].sum()),
             "ROAS": f"{fmt_df['purchase_value'].sum() / fmt_df['spend'].sum() if fmt_df['spend'].sum() > 0 else 0:.2f}",
         })
