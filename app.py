@@ -343,6 +343,9 @@ def init_session_state():
         st.session_state.date_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if "date_end" not in st.session_state:
         st.session_state.date_end = datetime.now()
+    if "team_members" not in st.session_state:
+        # Default team members - can be customized
+        st.session_state.team_members = ["Vanessa", "Jan", "Mike", "Sarah", "Alex"]
 
 
 def format_currency(value: float) -> str:
@@ -796,8 +799,219 @@ def render_team_section():
     """Render team sharing section in sidebar."""
     st.markdown("### Share Dashboard")
     st.caption("Share this URL with your team:")
-    st.code("https://your-app.streamlit.app", language=None)
+    st.code("https://marketing-kpis.streamlit.app", language=None)
     st.caption("Anyone with the link can view this dashboard.")
+
+    st.markdown("---")
+    st.markdown("### Manage Team Members")
+    st.caption("Add team member names (used for creative attribution)")
+
+    # Show current team members
+    current_members = st.session_state.get("team_members", [])
+
+    # Add new member
+    new_member = st.text_input("Add team member", key="new_member_input", placeholder="e.g., Vanessa")
+    if st.button("Add Member", key="add_member_btn"):
+        if new_member and new_member.strip():
+            if new_member.strip() not in current_members:
+                current_members.append(new_member.strip())
+                st.session_state.team_members = current_members
+                st.rerun()
+            else:
+                st.warning("Member already exists")
+
+    # Show list of members with remove option
+    if current_members:
+        st.caption("Current team:")
+        for member in current_members:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.text(member)
+            with col2:
+                if st.button("✕", key=f"remove_{member}"):
+                    current_members.remove(member)
+                    st.session_state.team_members = current_members
+                    st.rerun()
+
+
+def extract_team_member_from_ad_name(ad_name: str, team_members: list) -> str:
+    """Extract team member name from ad creative name.
+
+    Looks for team member names or initials in the ad name.
+    Convention: names/initials are often in the ad name like "20260115_VAN_UGC" or "Vanessa_Hook_v1"
+    """
+    if not ad_name or not team_members:
+        return "Unknown"
+
+    ad_name_upper = str(ad_name).upper()
+
+    for member in team_members:
+        member_upper = member.upper()
+        # Check for full name
+        if member_upper in ad_name_upper:
+            return member
+        # Check for first 2-3 letter initials (e.g., VAN for Vanessa, JAN for Jan)
+        if len(member) >= 2:
+            initials_2 = member_upper[:2]
+            initials_3 = member_upper[:3] if len(member) >= 3 else member_upper
+            # Look for initials with underscore or dash boundaries
+            if f"_{initials_3}_" in f"_{ad_name_upper}_" or f"_{initials_2}_" in f"_{ad_name_upper}_":
+                return member
+            # Also check at start of name
+            if ad_name_upper.startswith(f"{initials_3}_") or ad_name_upper.startswith(f"{initials_2}_"):
+                return member
+
+    return "Unknown"
+
+
+def get_team_member_stats(df: pd.DataFrame, team_members: list, min_spend: float = 1000, min_roas: float = 2.0) -> pd.DataFrame:
+    """Calculate performance stats for each team member based on their creatives."""
+    if df.empty or not team_members:
+        return pd.DataFrame()
+
+    # First aggregate by unique creative
+    creative_df = aggregate_by_creative(df)
+
+    # Assign team member to each creative
+    creative_df["team_member"] = creative_df["ad_name"].apply(
+        lambda x: extract_team_member_from_ad_name(x, team_members)
+    )
+
+    # Calculate stats per team member
+    stats = []
+    for member in team_members + ["Unknown"]:
+        member_df = creative_df[creative_df["team_member"] == member]
+        if member_df.empty:
+            continue
+
+        total_creatives = len(member_df)
+        total_spend = member_df["spend"].sum()
+        total_revenue = member_df["purchase_value"].sum()
+
+        # Winners = creatives with ≥min_spend AND ≥min_roas
+        winners = member_df[(member_df["spend"] >= min_spend) & (member_df["roas"] >= min_roas)]
+        num_winners = len(winners)
+
+        # Win/Hit rate
+        win_rate = (num_winners / total_creatives * 100) if total_creatives > 0 else 0
+
+        # Blended ROAS
+        blended_roas = total_revenue / total_spend if total_spend > 0 else 0
+
+        stats.append({
+            "Team Member": member,
+            "Creatives": total_creatives,
+            "Winners": num_winners,
+            "Win Rate": win_rate,
+            "Total Spend": total_spend,
+            "Total Revenue": total_revenue,
+            "ROAS": blended_roas,
+        })
+
+    return pd.DataFrame(stats)
+
+
+def render_team_performance(df: pd.DataFrame, min_roas: float = 2.0):
+    """Render team member performance section with dropdown and chart."""
+    st.markdown("### 👥 Team Performance")
+
+    team_members = st.session_state.get("team_members", [])
+
+    if not team_members:
+        st.info("Add team members in the sidebar to track individual performance.")
+        return
+
+    # Get team stats
+    team_stats = get_team_member_stats(df, team_members, min_spend=1000, min_roas=min_roas)
+
+    if team_stats.empty:
+        st.info("No creative data found for team members. Make sure ad names contain team member names or initials.")
+        return
+
+    # Filter out Unknown if there are known members
+    known_stats = team_stats[team_stats["Team Member"] != "Unknown"]
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        # Dropdown to select team member
+        member_options = ["All Team Members"] + list(known_stats["Team Member"].unique())
+        selected_member = st.selectbox(
+            "Select Team Member",
+            options=member_options,
+            key="team_member_select"
+        )
+
+        if selected_member == "All Team Members":
+            display_stats = known_stats
+        else:
+            display_stats = known_stats[known_stats["Team Member"] == selected_member]
+
+        # Show stats for selected member(s)
+        for _, row in display_stats.iterrows():
+            st.markdown(f"""
+            <div class="overview-card" style="margin-bottom: 12px;">
+                <div class="overview-label">{row['Team Member']}</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                    <div>
+                        <div style="font-size: 11px; color: #6b7280;">Creatives</div>
+                        <div style="font-size: 20px; font-weight: 600; color: #111827;">{row['Creatives']}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; color: #6b7280;">Winners</div>
+                        <div style="font-size: 20px; font-weight: 600; color: #111827;">{row['Winners']}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; color: #6b7280;">Win Rate</div>
+                        <div style="font-size: 20px; font-weight: 600; color: #10b981;">{row['Win Rate']:.1f}%</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; color: #6b7280;">ROAS</div>
+                        <div style="font-size: 20px; font-weight: 600; color: #111827;">{row['ROAS']:.2f}</div>
+                    </div>
+                </div>
+                <div style="margin-top: 8px; font-size: 12px; color: #6b7280;">
+                    Spend: {format_currency(row['Total Spend'])} | Revenue: {format_currency(row['Total Revenue'])}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with col2:
+        # Win Rate Chart - show who has the best hit rate
+        if len(known_stats) > 0:
+            # Sort by win rate descending
+            chart_data = known_stats.sort_values("Win Rate", ascending=True)
+
+            fig = go.Figure()
+
+            # Add horizontal bar chart
+            fig.add_trace(go.Bar(
+                y=chart_data["Team Member"],
+                x=chart_data["Win Rate"],
+                orientation='h',
+                marker=dict(
+                    color=chart_data["Win Rate"],
+                    colorscale=[[0, '#ef4444'], [0.5, '#f59e0b'], [1, '#10b981']],
+                ),
+                text=[f"{x:.1f}%" for x in chart_data["Win Rate"]],
+                textposition='outside',
+                hovertemplate="<b>%{y}</b><br>Win Rate: %{x:.1f}%<extra></extra>"
+            ))
+
+            fig.update_layout(
+                title="Win Rate by Team Member",
+                xaxis_title="Win Rate (%)",
+                yaxis_title="",
+                height=300,
+                margin=dict(l=20, r=20, t=40, b=20),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='#374151'),
+                xaxis=dict(gridcolor='#e5e7eb', range=[0, max(chart_data["Win Rate"].max() * 1.2, 10)]),
+                yaxis=dict(gridcolor='#e5e7eb'),
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
 
 
 def main():
@@ -861,6 +1075,11 @@ def main():
 
     with tab4:
         render_losers_table(df, min_roas)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Team Performance Section
+    render_team_performance(df, min_roas)
 
 
 if __name__ == "__main__":
