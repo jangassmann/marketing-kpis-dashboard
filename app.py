@@ -344,9 +344,8 @@ def init_session_state():
     if "date_end" not in st.session_state:
         st.session_state.date_end = datetime.now()
     if "team_members" not in st.session_state:
-        # Default team members - use initials matching your naming convention
-        # Format: 5727_PK_VID_LORAX_B2G1 (PK is at position 2)
-        st.session_state.team_members = ["PK", "CL"]
+        # Team members will be auto-extracted from ad names
+        st.session_state.team_members = []
 
 
 def format_currency(value: float) -> str:
@@ -804,93 +803,87 @@ def render_team_section():
     st.caption("Anyone with the link can view this dashboard.")
 
     st.markdown("---")
-    st.markdown("### Manage Team Members")
-    st.caption("Add initials or names used in ad naming")
-    st.caption("Format: 5727_**PK**_VID_LORAX → PK is the initials")
+    st.markdown("### Team Members")
+    st.caption("Auto-detected from ad names")
+    st.caption("Format: 5727_PK_VID_LORAX-**Name**")
 
-    # Add new member with form to prevent rerun issues
-    with st.form(key="add_member_form", clear_on_submit=True):
-        new_member = st.text_input("Name or Initials", placeholder="e.g., PK or Patrick")
-        submit = st.form_submit_button("Add Member")
-        if submit and new_member and new_member.strip():
-            member_to_add = new_member.strip()
-            if member_to_add not in st.session_state.team_members:
-                st.session_state.team_members.append(member_to_add)
-                st.rerun()
-
-    # Show list of members with remove option
+    # Show auto-detected team members
     if st.session_state.team_members:
-        st.caption("Current team:")
-        members_to_remove = []
-        for i, member in enumerate(st.session_state.team_members):
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown(f"**{member}**")
-            with col2:
-                if st.button("✕", key=f"remove_member_{i}_{member}"):
-                    members_to_remove.append(member)
-
-        # Remove members after loop to avoid modification during iteration
-        if members_to_remove:
-            for member in members_to_remove:
-                if member in st.session_state.team_members:
-                    st.session_state.team_members.remove(member)
-            st.rerun()
+        st.caption("Detected team:")
+        for member in sorted(st.session_state.team_members):
+            st.markdown(f"• **{member}**")
+    else:
+        st.caption("No team members detected yet. Names are extracted from the end of ad names after the dash (e.g., -Vanessa)")
 
 
-def extract_team_member_from_ad_name(ad_name: str, team_members: list) -> str:
-    """Extract team member name from ad creative name.
+def extract_team_member_from_ad_name(ad_name: str) -> str:
+    """Extract team member first name from ad creative name.
 
-    Naming convention: 5727_PK_VID_LORAX_B2G1
-    - Position 1: ID number
-    - Position 2: Team member initials (PK, CL, etc.)
-    - Position 3+: Creative details
-
-    Also supports full names anywhere in the ad name.
+    Naming convention: 5727_PK_VID_LORAX_B2G1-Vanessa
+    - The name is at the END after the dash (-)
+    - We extract just the first name
     """
-    if not ad_name or not team_members:
+    if not ad_name:
         return "Unknown"
 
     ad_name_str = str(ad_name).strip()
-    ad_name_upper = ad_name_str.upper()
 
-    # Split by underscore to check position-based initials
-    parts = ad_name_upper.split("_")
+    # Look for dash followed by name at the end
+    if "-" in ad_name_str:
+        # Get the part after the last dash
+        after_dash = ad_name_str.split("-")[-1].strip()
 
-    for member in team_members:
-        member_upper = member.upper().strip()
+        # Clean up - remove any trailing numbers or special chars
+        # Keep only letters (the name)
+        name = ""
+        for char in after_dash:
+            if char.isalpha():
+                name += char
+            elif name:  # Stop at first non-alpha after we've started collecting
+                break
 
-        # Check for exact match in position 2 (index 1) - e.g., "5727_PK_VID" -> PK
-        if len(parts) >= 2 and parts[1] == member_upper:
-            return member
-
-        # Check for full name anywhere in ad name
-        if member_upper in ad_name_upper:
-            return member
-
-        # Check for initials anywhere with underscore boundaries
-        if f"_{member_upper}_" in f"_{ad_name_upper}_":
-            return member
+        if name and len(name) >= 2:
+            # Capitalize properly (first letter upper, rest lower)
+            return name.capitalize()
 
     return "Unknown"
 
 
-def get_team_member_stats(df: pd.DataFrame, team_members: list, min_spend: float = 1000, min_roas: float = 2.0) -> pd.DataFrame:
+def extract_all_team_members(df: pd.DataFrame) -> list:
+    """Extract all unique team member names from ad names in the dataframe."""
+    if df.empty or "ad_name" not in df.columns:
+        return []
+
+    # Get unique ad names
+    ad_names = df["ad_name"].dropna().unique()
+
+    # Extract names from each ad
+    names = set()
+    for ad_name in ad_names:
+        name = extract_team_member_from_ad_name(ad_name)
+        if name != "Unknown":
+            names.add(name)
+
+    return sorted(list(names))
+
+
+def get_team_member_stats(df: pd.DataFrame, min_spend: float = 1000, min_roas: float = 2.0) -> pd.DataFrame:
     """Calculate performance stats for each team member based on their creatives."""
-    if df.empty or not team_members:
+    if df.empty:
         return pd.DataFrame()
 
     # First aggregate by unique creative
     creative_df = aggregate_by_creative(df)
 
-    # Assign team member to each creative
-    creative_df["team_member"] = creative_df["ad_name"].apply(
-        lambda x: extract_team_member_from_ad_name(x, team_members)
-    )
+    # Assign team member to each creative (auto-extract from ad name)
+    creative_df["team_member"] = creative_df["ad_name"].apply(extract_team_member_from_ad_name)
+
+    # Get all unique team members (excluding Unknown for stats)
+    all_members = creative_df["team_member"].unique()
 
     # Calculate stats per team member
     stats = []
-    for member in team_members + ["Unknown"]:
+    for member in all_members:
         member_df = creative_df[creative_df["team_member"] == member]
         if member_df.empty:
             continue
@@ -926,21 +919,24 @@ def render_team_performance(df: pd.DataFrame, min_roas: float = 2.0):
     """Render team member performance section with dropdown and chart."""
     st.markdown("### 👥 Team Performance")
 
-    team_members = st.session_state.get("team_members", [])
+    # Auto-extract team members from ad names and update session state
+    detected_members = extract_all_team_members(df)
+    st.session_state.team_members = detected_members
 
-    if not team_members:
-        st.info("Add team members in the sidebar to track individual performance.")
-        return
-
-    # Get team stats
-    team_stats = get_team_member_stats(df, team_members, min_spend=1000, min_roas=min_roas)
+    # Get team stats (auto-extracts from ad names)
+    team_stats = get_team_member_stats(df, min_spend=1000, min_roas=min_roas)
 
     if team_stats.empty:
-        st.info("No creative data found for team members. Make sure ad names contain team member names or initials.")
+        st.info("No team member data found. Make sure ad names end with -Name (e.g., 5727_PK_VID_LORAX-Vanessa)")
         return
 
     # Filter out Unknown if there are known members
     known_stats = team_stats[team_stats["Team Member"] != "Unknown"]
+
+    if known_stats.empty:
+        st.info("No team members detected. Ad names should end with -Name (e.g., 5727_PK_VID_LORAX-Vanessa)")
+        # Show Unknown stats if that's all we have
+        known_stats = team_stats
 
     col1, col2 = st.columns([1, 2])
 
