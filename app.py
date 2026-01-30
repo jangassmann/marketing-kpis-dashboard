@@ -804,70 +804,82 @@ def render_team_section():
 
     st.markdown("---")
     st.markdown("### Team Members")
-    st.caption("Auto-detected from ad names")
-    st.caption("Format: 5727_PK_VID_LORAX-**Name**")
 
     # Show auto-detected team members
     if st.session_state.team_members:
-        st.caption("Detected team:")
+        st.caption("Auto-detected from ad names:")
         for member in sorted(st.session_state.team_members):
             st.markdown(f"• **{member}**")
     else:
-        st.caption("No team members detected yet. Names are extracted from the end of ad names after the dash (e.g., -Vanessa)")
+        st.caption("No team members detected.")
+        st.caption("Add names to ads like:")
+        st.code("5727_PK_VID-Vanessa", language=None)
 
 
 def extract_team_member_from_ad_name(ad_name: str) -> str:
     """Extract team member first name from ad creative name.
 
     Naming convention: 5727_PK_VID_LORAX_B2G1-Vanessa
-    - The name is at the END after the dash (-)
-    - We extract just the first name
-    - Must be a real name (not file extensions, abbreviations, etc.)
+    - The name MUST be at the very END after the LAST dash (-)
+    - Must be a proper first name (4+ letters, not a common word)
     """
     if not ad_name:
         return "Unknown"
 
     ad_name_str = str(ad_name).strip()
 
-    # List of things that are NOT names (file extensions, common abbreviations, etc.)
+    # Only look for names after a dash
+    if "-" not in ad_name_str:
+        return "Unknown"
+
+    # Get the part after the LAST dash only
+    after_dash = ad_name_str.split("-")[-1].strip()
+
+    # The name should be ONLY letters (no numbers, underscores, etc.)
+    # This ensures we're getting something like "Vanessa" not "B1G1" or "Copy2"
+    if not after_dash.isalpha():
+        return "Unknown"
+
+    # Must be at least 4 characters (real first names)
+    if len(after_dash) < 4:
+        return "Unknown"
+
+    # Comprehensive blocklist of things that are NOT names
     not_names = {
         # File extensions
-        "jpg", "jpeg", "png", "gif", "mp4", "mov", "webp", "pdf", "svg",
-        # Common ad naming parts
-        "copy", "vid", "video", "img", "image", "carousel", "car", "reel",
-        "story", "static", "dynamic", "dpa", "asa", "cbo", "abo",
-        "b1g1", "b2g1", "bogo", "sale", "promo", "offer", "test", "v1", "v2", "v3",
-        "listicle", "ugc", "hook", "cta", "headline", "body", "creative", "creatives",
-        # Short abbreviations (2-3 chars that aren't names)
-        "bf", "pk", "cl", "ad", "fb", "ig", "tt", "yt", "original", "new", "old",
-        "eki", "fur", "jan",  # These might be abbreviations, not names
+        "jpeg", "webp",
+        # Common ad/marketing terms
+        "copy", "video", "image", "carousel", "reel", "story", "static", "dynamic",
+        "sale", "promo", "offer", "test", "hook", "headline", "body", "creative",
+        "creatives", "original", "listicle", "retargeting", "prospecting",
+        "awareness", "conversion", "traffic", "engagement", "reach", "lead",
+        "catalog", "collection", "stories", "feed", "explore", "reels",
+        # Common words that might appear
+        "free", "best", "sale", "shop", "call", "click", "learn", "more",
+        "limited", "exclusive", "special", "bonus", "discount", "percent",
+        "today", "week", "month", "year", "spring", "summer", "fall", "winter",
+        "black", "friday", "cyber", "monday", "christmas", "holiday",
+        "version", "variant", "iteration", "update", "final", "draft",
+        "mobile", "desktop", "square", "vertical", "horizontal",
     }
 
-    # Look for dash followed by name at the end
-    if "-" in ad_name_str:
-        # Get the part after the last dash
-        after_dash = ad_name_str.split("-")[-1].strip()
+    name_lower = after_dash.lower()
 
-        # Clean up - remove any trailing numbers or special chars
-        # Keep only letters (the name)
-        name = ""
-        for char in after_dash:
-            if char.isalpha():
-                name += char
-            elif name:  # Stop at first non-alpha after we've started collecting
-                break
+    # Skip if it's in our blocklist
+    if name_lower in not_names:
+        return "Unknown"
 
-        # Validate it's a real name
-        if name and len(name) >= 3:  # Names should be at least 3 chars
-            name_lower = name.lower()
-            # Skip if it's in our "not names" list
-            if name_lower not in not_names:
-                # Check if it looks like a name (starts with capital in original, or we capitalize it)
-                # Names typically don't have all caps or unusual patterns
-                if name.isalpha():
-                    return name.capitalize()
+    # Skip if it ends with common non-name suffixes
+    bad_endings = ("ing", "tion", "ment", "ness", "able", "ible", "ous", "ive")
+    if name_lower.endswith(bad_endings):
+        return "Unknown"
 
-    return "Unknown"
+    # Skip if all uppercase (likely an abbreviation like "BOGO")
+    if after_dash.isupper():
+        return "Unknown"
+
+    # Return properly capitalized name
+    return after_dash.capitalize()
 
 
 def extract_all_team_members(df: pd.DataFrame) -> list:
@@ -947,17 +959,23 @@ def render_team_performance(df: pd.DataFrame, min_roas: float = 2.0):
     # Get team stats (auto-extracts from ad names)
     team_stats = get_team_member_stats(df, min_spend=1000, min_roas=min_roas)
 
-    if team_stats.empty:
-        st.info("No team member data found. Make sure ad names end with -Name (e.g., 5727_PK_VID_LORAX-Vanessa)")
-        return
+    # Filter out Unknown
+    known_stats = pd.DataFrame()
+    if not team_stats.empty:
+        known_stats = team_stats[team_stats["Team Member"] != "Unknown"]
 
-    # Filter out Unknown if there are known members
-    known_stats = team_stats[team_stats["Team Member"] != "Unknown"]
-
+    # If no real team members found, show setup instructions
     if known_stats.empty:
-        st.info("No team members detected. Ad names should end with -Name (e.g., 5727_PK_VID_LORAX-Vanessa)")
-        # Show Unknown stats if that's all we have
-        known_stats = team_stats
+        st.info("""
+        **No team members detected yet.**
+
+        To track individual performance, add names to your ad naming convention:
+
+        `5727_PK_VID_LORAX_B2G1-Vanessa`
+
+        The name should be at the end after a dash (-).
+        """)
+        return
 
     col1, col2 = st.columns([1, 2])
 
