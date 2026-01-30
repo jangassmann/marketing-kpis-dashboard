@@ -822,11 +822,26 @@ def extract_team_member_from_ad_name(ad_name: str) -> str:
     Naming convention: 5727_PK_VID_LORAX_B2G1-Vanessa
     - The name is at the END after the dash (-)
     - We extract just the first name
+    - Must be a real name (not file extensions, abbreviations, etc.)
     """
     if not ad_name:
         return "Unknown"
 
     ad_name_str = str(ad_name).strip()
+
+    # List of things that are NOT names (file extensions, common abbreviations, etc.)
+    not_names = {
+        # File extensions
+        "jpg", "jpeg", "png", "gif", "mp4", "mov", "webp", "pdf", "svg",
+        # Common ad naming parts
+        "copy", "vid", "video", "img", "image", "carousel", "car", "reel",
+        "story", "static", "dynamic", "dpa", "asa", "cbo", "abo",
+        "b1g1", "b2g1", "bogo", "sale", "promo", "offer", "test", "v1", "v2", "v3",
+        "listicle", "ugc", "hook", "cta", "headline", "body", "creative", "creatives",
+        # Short abbreviations (2-3 chars that aren't names)
+        "bf", "pk", "cl", "ad", "fb", "ig", "tt", "yt", "original", "new", "old",
+        "eki", "fur", "jan",  # These might be abbreviations, not names
+    }
 
     # Look for dash followed by name at the end
     if "-" in ad_name_str:
@@ -842,9 +857,15 @@ def extract_team_member_from_ad_name(ad_name: str) -> str:
             elif name:  # Stop at first non-alpha after we've started collecting
                 break
 
-        if name and len(name) >= 2:
-            # Capitalize properly (first letter upper, rest lower)
-            return name.capitalize()
+        # Validate it's a real name
+        if name and len(name) >= 3:  # Names should be at least 3 chars
+            name_lower = name.lower()
+            # Skip if it's in our "not names" list
+            if name_lower not in not_names:
+                # Check if it looks like a name (starts with capital in original, or we capitalize it)
+                # Names typically don't have all caps or unusual patterns
+                if name.isalpha():
+                    return name.capitalize()
 
     return "Unknown"
 
