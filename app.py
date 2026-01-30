@@ -344,8 +344,9 @@ def init_session_state():
     if "date_end" not in st.session_state:
         st.session_state.date_end = datetime.now()
     if "team_members" not in st.session_state:
-        # Default team members - can be customized
-        st.session_state.team_members = ["Vanessa", "Jan", "Mike", "Sarah", "Alex"]
+        # Default team members - use initials matching your naming convention
+        # Format: 5727_PK_VID_LORAX_B2G1 (PK is at position 2)
+        st.session_state.team_members = ["PK", "CL"]
 
 
 def format_currency(value: float) -> str:
@@ -804,62 +805,72 @@ def render_team_section():
 
     st.markdown("---")
     st.markdown("### Manage Team Members")
-    st.caption("Add team member names (used for creative attribution)")
+    st.caption("Add initials or names used in ad naming")
+    st.caption("Format: 5727_**PK**_VID_LORAX → PK is the initials")
 
-    # Show current team members
-    current_members = st.session_state.get("team_members", [])
-
-    # Add new member
-    new_member = st.text_input("Add team member", key="new_member_input", placeholder="e.g., Vanessa")
-    if st.button("Add Member", key="add_member_btn"):
-        if new_member and new_member.strip():
-            if new_member.strip() not in current_members:
-                current_members.append(new_member.strip())
-                st.session_state.team_members = current_members
+    # Add new member with form to prevent rerun issues
+    with st.form(key="add_member_form", clear_on_submit=True):
+        new_member = st.text_input("Name or Initials", placeholder="e.g., PK or Patrick")
+        submit = st.form_submit_button("Add Member")
+        if submit and new_member and new_member.strip():
+            member_to_add = new_member.strip()
+            if member_to_add not in st.session_state.team_members:
+                st.session_state.team_members.append(member_to_add)
                 st.rerun()
-            else:
-                st.warning("Member already exists")
 
     # Show list of members with remove option
-    if current_members:
+    if st.session_state.team_members:
         st.caption("Current team:")
-        for member in current_members:
+        members_to_remove = []
+        for i, member in enumerate(st.session_state.team_members):
             col1, col2 = st.columns([3, 1])
             with col1:
-                st.text(member)
+                st.markdown(f"**{member}**")
             with col2:
-                if st.button("✕", key=f"remove_{member}"):
-                    current_members.remove(member)
-                    st.session_state.team_members = current_members
-                    st.rerun()
+                if st.button("✕", key=f"remove_member_{i}_{member}"):
+                    members_to_remove.append(member)
+
+        # Remove members after loop to avoid modification during iteration
+        if members_to_remove:
+            for member in members_to_remove:
+                if member in st.session_state.team_members:
+                    st.session_state.team_members.remove(member)
+            st.rerun()
 
 
 def extract_team_member_from_ad_name(ad_name: str, team_members: list) -> str:
     """Extract team member name from ad creative name.
 
-    Looks for team member names or initials in the ad name.
-    Convention: names/initials are often in the ad name like "20260115_VAN_UGC" or "Vanessa_Hook_v1"
+    Naming convention: 5727_PK_VID_LORAX_B2G1
+    - Position 1: ID number
+    - Position 2: Team member initials (PK, CL, etc.)
+    - Position 3+: Creative details
+
+    Also supports full names anywhere in the ad name.
     """
     if not ad_name or not team_members:
         return "Unknown"
 
-    ad_name_upper = str(ad_name).upper()
+    ad_name_str = str(ad_name).strip()
+    ad_name_upper = ad_name_str.upper()
+
+    # Split by underscore to check position-based initials
+    parts = ad_name_upper.split("_")
 
     for member in team_members:
-        member_upper = member.upper()
-        # Check for full name
+        member_upper = member.upper().strip()
+
+        # Check for exact match in position 2 (index 1) - e.g., "5727_PK_VID" -> PK
+        if len(parts) >= 2 and parts[1] == member_upper:
+            return member
+
+        # Check for full name anywhere in ad name
         if member_upper in ad_name_upper:
             return member
-        # Check for first 2-3 letter initials (e.g., VAN for Vanessa, JAN for Jan)
-        if len(member) >= 2:
-            initials_2 = member_upper[:2]
-            initials_3 = member_upper[:3] if len(member) >= 3 else member_upper
-            # Look for initials with underscore or dash boundaries
-            if f"_{initials_3}_" in f"_{ad_name_upper}_" or f"_{initials_2}_" in f"_{ad_name_upper}_":
-                return member
-            # Also check at start of name
-            if ad_name_upper.startswith(f"{initials_3}_") or ad_name_upper.startswith(f"{initials_2}_"):
-                return member
+
+        # Check for initials anywhere with underscore boundaries
+        if f"_{member_upper}_" in f"_{ad_name_upper}_":
+            return member
 
     return "Unknown"
 
