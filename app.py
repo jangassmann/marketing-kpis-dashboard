@@ -1,314 +1,180 @@
 """
-Win Rate Tracker Dashboard
-Track ad creative performance and win rates across Meta ad accounts.
+Win Rate Tracker V2 - Media Buying Analytics Dashboard
+Gamification + Deep Ad Analysis
 """
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import os
-import re
-from dotenv import load_dotenv
-
-from src.meta_api import (
-    MetaAdsClient,
-    get_demo_data,
-    get_demo_insights,
-    get_available_ad_accounts,
-    fetch_all_accounts_data,
-    fetch_all_accounts_insights,
-    fetch_monthly_data,
-)
-
-load_dotenv()
-
-
-# Cache data for 10 minutes to speed up page loads
-@st.cache_data(ttl=600)
-def load_cached_data(date_start_str: str, date_end_str: str, use_demo: bool):
-    """Load and cache data from Meta API."""
-    if use_demo:
-        return get_demo_data(), get_demo_insights()
-
-    date_start = datetime.strptime(date_start_str, "%Y-%m-%d")
-    date_end = datetime.strptime(date_end_str, "%Y-%m-%d")
-    date_end = datetime.combine(date_end, datetime.max.time())
-
-    data = fetch_all_accounts_data(date_start, date_end)
-    insights = fetch_all_accounts_insights(date_start, date_end)
-    return data, insights
-
-
-# Cache monthly historical data for 30 minutes (longer since historical data doesn't change)
-@st.cache_data(ttl=1800)
-def load_monthly_historical_data(num_months: int = 6):
-    """Load and cache monthly historical data."""
-    return fetch_monthly_data(num_months)
-
+import random
 
 # Page configuration
 st.set_page_config(
-    page_title="Win Rate Tracker",
-    page_icon="📊",
+    page_title="Win Rate Tracker V2",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# Custom CSS for white theme with visible text
+# Custom CSS for dark mode native design
 st.markdown("""
 <style>
-    /* White background theme - force light mode */
+    /* Dark theme base */
     .stApp {
-        background-color: #f8f9fa !important;
+        background-color: #0f1117 !important;
     }
-    .main > div {
-        padding-top: 1rem;
-    }
-
-    /* Force light theme colors */
     [data-testid="stAppViewContainer"] {
-        background-color: #f8f9fa !important;
+        background-color: #0f1117 !important;
     }
     [data-testid="stHeader"] {
-        background-color: #f8f9fa !important;
+        background-color: #0f1117 !important;
     }
 
-    /* Make all text dark */
+    /* Text colors */
     .stMarkdown, .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
-        color: #111827 !important;
+        color: #fafafa !important;
     }
 
-    /* Selectbox styling - ensure visible text */
-    .stSelectbox > div > div {
-        background-color: white !important;
-        border: 1px solid #e5e7eb !important;
-        border-radius: 8px !important;
-    }
-    .stSelectbox > div > div > div {
-        color: #111827 !important;
-    }
-    .stSelectbox label {
-        color: #374151 !important;
-    }
-    [data-baseweb="select"] {
-        background-color: white !important;
-    }
-    [data-baseweb="select"] > div {
-        background-color: white !important;
-        color: #111827 !important;
-    }
-    [data-baseweb="select"] span {
-        color: #111827 !important;
-    }
-
-    /* Dropdown menu styling - force white background */
-    [data-baseweb="popover"] {
-        background-color: white !important;
-    }
-    [data-baseweb="popover"] > div {
-        background-color: white !important;
-    }
-    [data-baseweb="menu"] {
-        background-color: white !important;
-    }
-    [data-baseweb="menu"] li {
-        color: #111827 !important;
-        background-color: white !important;
-    }
-    [data-baseweb="menu"] li:hover {
-        background-color: #f3f4f6 !important;
-    }
-    [role="listbox"] {
-        background-color: white !important;
-    }
-    [role="listbox"] > div {
-        background-color: white !important;
-    }
-    [role="option"] {
-        color: #111827 !important;
-        background-color: white !important;
-    }
-    [role="option"]:hover {
-        background-color: #f3f4f6 !important;
-    }
-    [data-highlighted="true"] {
-        background-color: #f3f4f6 !important;
-    }
-    /* Fix dropdown list container */
-    ul[role="listbox"] {
-        background-color: white !important;
-    }
-    div[data-baseweb="popover"] > div > div {
-        background-color: white !important;
-    }
-
-    /* Overview cards - white with shadow */
-    .overview-card {
-        background: white !important;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
+    /* Metric cards */
+    .metric-card {
+        background: linear-gradient(135deg, #1a1d29 0%, #252836 100%);
+        border: 1px solid #2d3143;
+        border-radius: 16px;
         padding: 24px;
-        height: 100%;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .overview-label {
-        font-size: 11px;
-        color: #6b7280 !important;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 12px;
-    }
-    .overview-value {
-        font-size: 48px;
-        font-weight: 700;
-        color: #111827 !important;
-        margin-bottom: 8px;
-        font-family: 'SF Mono', 'Monaco', monospace;
-        letter-spacing: -1px;
-    }
-    .overview-subtitle {
-        font-size: 13px;
-        color: #6b7280 !important;
-    }
-    .overview-change {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 13px;
-        font-weight: 500;
-        margin-left: 8px;
-    }
-    .change-positive {
-        background: #dcfce7 !important;
-        color: #15803d !important;
-    }
-    .change-negative {
-        background: #fee2e2 !important;
-        color: #dc2626 !important;
-    }
-    .change-neutral {
-        background: #f3f4f6 !important;
-        color: #6b7280 !important;
-    }
-
-    /* Section styling */
-    .section-card {
-        background: white !important;
-        border-radius: 12px;
-        padding: 24px;
-        margin-bottom: 24px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .section-title {
-        font-size: 18px;
-        font-weight: 600;
-        color: #111827 !important;
         margin-bottom: 16px;
     }
+    .metric-label {
+        font-size: 12px;
+        color: #8b8fa3 !important;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+    }
+    .metric-value {
+        font-size: 42px;
+        font-weight: 700;
+        color: #ffffff !important;
+        font-family: 'SF Mono', 'Monaco', monospace;
+        line-height: 1.1;
+    }
+    .metric-trend {
+        font-size: 13px;
+        color: #8b8fa3;
+        margin-top: 8px;
+    }
+    .trend-up { color: #22c55e !important; }
+    .trend-down { color: #ef4444 !important; }
 
-    /* Data tables - force light background */
+    /* Podium styling */
+    .podium-card {
+        border-radius: 16px;
+        padding: 24px;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+    }
+    .podium-gold {
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        box-shadow: 0 0 40px rgba(251, 191, 36, 0.3);
+    }
+    .podium-silver {
+        background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%);
+        box-shadow: 0 0 30px rgba(156, 163, 175, 0.2);
+    }
+    .podium-bronze {
+        background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+        box-shadow: 0 0 30px rgba(217, 119, 6, 0.2);
+    }
+    .podium-rank {
+        font-size: 48px;
+        font-weight: 900;
+        color: rgba(255,255,255,0.3);
+        position: absolute;
+        top: 10px;
+        right: 20px;
+    }
+    .podium-name {
+        font-size: 28px;
+        font-weight: 800;
+        color: #1a1a2e !important;
+        margin-bottom: 8px;
+    }
+    .podium-stat {
+        font-size: 14px;
+        color: rgba(26,26,46,0.8) !important;
+        margin: 4px 0;
+    }
+    .podium-value {
+        font-size: 20px;
+        font-weight: 700;
+        color: #1a1a2e !important;
+    }
+
+    /* Alert cards */
+    .alert-card {
+        background: linear-gradient(135deg, #1a1d29 0%, #252836 100%);
+        border-left: 4px solid;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+    }
+    .alert-rising {
+        border-color: #22c55e;
+    }
+    .alert-fatigue {
+        border-color: #ef4444;
+    }
+    .alert-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #fafafa !important;
+        margin-bottom: 4px;
+    }
+    .alert-subtitle {
+        font-size: 12px;
+        color: #8b8fa3 !important;
+    }
+
+    /* Section headers */
+    .section-header {
+        font-size: 20px;
+        font-weight: 700;
+        color: #fafafa !important;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    /* Data tables */
     .stDataFrame, [data-testid="stDataFrame"] {
-        background: white !important;
-    }
-    .stDataFrame th {
-        background-color: #f9fafb !important;
-        color: #374151 !important;
-    }
-    .stDataFrame td {
-        background-color: white !important;
-        color: #111827 !important;
+        background: #1a1d29 !important;
     }
 
-    /* Tabs styling */
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: transparent !important;
-    }
-    .stTabs [data-baseweb="tab"] {
-        color: #6b7280 !important;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #111827 !important;
-    }
-
-    /* Sidebar styling */
-    [data-testid="stSidebar"] {
-        background-color: #1f2937 !important;
-    }
-    [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] .stMarkdown p,
-    [data-testid="stSidebar"] .stMarkdown h1,
-    [data-testid="stSidebar"] .stMarkdown h2,
-    [data-testid="stSidebar"] .stMarkdown h3,
-    [data-testid="stSidebar"] span,
-    [data-testid="stSidebar"] .stCaption {
-        color: white !important;
-    }
-    [data-testid="stSidebar"] label {
-        color: white !important;
-    }
-    [data-testid="stSidebar"] code {
-        background-color: #374151 !important;
-        color: #e5e7eb !important;
-    }
-
-    /* Date input styling */
-    .stDateInput > div > div {
-        background-color: white !important;
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        background: #1a1d29 !important;
         border-radius: 8px !important;
     }
-    .stDateInput input {
-        color: #111827 !important;
-        background-color: white !important;
-    }
 
-    /* Date picker calendar popup */
-    [data-baseweb="calendar"] {
-        background-color: white !important;
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        background: transparent !important;
+        gap: 8px;
     }
-    [data-baseweb="calendar"] * {
-        color: #111827 !important;
+    .stTabs [data-baseweb="tab"] {
+        background: #1a1d29 !important;
+        border-radius: 8px !important;
+        color: #8b8fa3 !important;
+        padding: 10px 20px !important;
     }
-    [data-baseweb="calendar"] [role="grid"] {
-        background-color: white !important;
-    }
-    [data-baseweb="calendar"] button {
-        color: #111827 !important;
-        background-color: white !important;
-    }
-    [data-baseweb="calendar"] button:hover {
-        background-color: #f3f4f6 !important;
-    }
-    [data-baseweb="calendar"] [aria-selected="true"] {
-        background-color: #3b82f6 !important;
-        color: white !important;
-    }
-    [data-baseweb="calendar"] [data-highlighted="true"] {
-        background-color: #dbeafe !important;
-    }
-    /* Calendar header */
-    [data-baseweb="calendar"] [data-baseweb="typo-labellarge"],
-    [data-baseweb="calendar"] [data-baseweb="typo-labelmedium"] {
-        color: #111827 !important;
-    }
-    /* Month/Year selectors */
-    [data-baseweb="select"] {
-        background-color: white !important;
-    }
-    /* Day names row */
-    [data-baseweb="calendar"] thead th {
-        color: #6b7280 !important;
-    }
-    /* Calendar days */
-    [data-baseweb="calendar"] td {
-        color: #111827 !important;
-    }
-    [data-baseweb="calendar"] td button {
-        color: #111827 !important;
+    .stTabs [aria-selected="true"] {
+        background: #3b82f6 !important;
+        color: #ffffff !important;
     }
 
     /* Hide Streamlit elements */
@@ -316,551 +182,520 @@ st.markdown("""
     footer {visibility: hidden;}
     .stDeployButton {display: none;}
 
-    /* Button styling - blue refresh button */
-    .stButton > button {
-        background-color: #3b82f6 !important;
-        color: white !important;
-        border: none !important;
-    }
-    .stButton > button:hover {
-        background-color: #2563eb !important;
+    /* Plotly chart container */
+    .js-plotly-plot {
+        border-radius: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-def init_session_state():
-    """Initialize session state."""
-    if "data" not in st.session_state:
-        st.session_state.data = None
-    if "insights" not in st.session_state:
-        st.session_state.insights = None
-    if "last_refresh" not in st.session_state:
-        st.session_state.last_refresh = None
-    if "selected_account" not in st.session_state:
-        st.session_state.selected_account = "All Accounts"
-    if "date_start" not in st.session_state:
-        st.session_state.date_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    if "date_end" not in st.session_state:
-        st.session_state.date_end = datetime.now()
+def generate_dummy_data(num_rows: int = 500) -> pd.DataFrame:
+    """Generate robust dummy ad data with proper naming convention."""
+    np.random.seed(42)
 
+    # Media buyer initials
+    buyers = ["JD", "SM", "AK", "MR", "TL", "KW", "CB", "RP", "NJ", "EL"]
 
-def format_currency(value: float) -> str:
-    """Format number as currency."""
-    if value >= 1000000:
-        return f"${value/1000000:.2f}M"
-    elif value >= 1000:
-        return f"${value:,.0f}"
-    return f"${value:.2f}"
+    # Creative concepts
+    concepts = [
+        "UGC-Hook", "Static-Promo", "Carousel-Sale", "Video-Demo",
+        "Testimonial", "BTS-Content", "Product-Focus", "Lifestyle",
+        "Problem-Solution", "Before-After", "Comparison", "Tutorial",
+        "Unboxing", "Review-Mashup", "FOMO-Timer", "Social-Proof"
+    ]
 
+    # Formats
+    formats = ["Video", "Image", "Carousel", "Story", "Reel"]
 
-def format_number(value: float) -> str:
-    """Format large numbers with commas."""
-    if value >= 1000000:
-        return f"{value/1000000:.2f}M"
-    elif value >= 1000:
-        return f"{value/1000:,.0f}K"
-    return f"{value:,.0f}"
+    data = []
 
+    for i in range(num_rows):
+        # Generate ad name in strict format: DATE_INITIALS_CONCEPT_FORMAT
+        date_str = (datetime.now() - timedelta(days=random.randint(0, 90))).strftime("%Y%m%d")
+        buyer = random.choice(buyers)
+        concept = random.choice(concepts)
+        fmt = random.choice(formats)
+        ad_name = f"{date_str}_{buyer}_{concept}_{fmt}"
 
-def get_month_date_range(year: int, month: int):
-    """Get start and end dates for a month."""
-    start = datetime(year, month, 1)
-    if month == 12:
-        end = datetime(year + 1, 1, 1) - timedelta(days=1)
-    else:
-        end = datetime(year, month + 1, 1) - timedelta(days=1)
-    return start, end
+        # Generate spend with realistic distribution (more low spend, fewer high spend)
+        spend = np.random.exponential(scale=1500)
+        spend = min(max(spend, 50), 10000)  # Clamp between $50 and $10,000
 
-
-def extract_base_creative_name(name: str) -> str:
-    """Extract base creative name to identify unique creatives.
-
-    Same creative name = same creative, even if duplicated in account.
-    We use the full ad_name as the creative identifier.
-    """
-    if not name:
-        return "Unknown"
-    return str(name).strip()
-
-
-def aggregate_by_creative(df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate all ads by unique creative name.
-
-    Same ad_name = same creative. Combine spend, revenue, purchases, etc.
-    This gives us the true performance of each unique creative.
-    """
-    if df.empty:
-        return df
-
-    df = df.copy()
-
-    # Group by ad_name (creative name) and aggregate metrics
-    agg_df = df.groupby("ad_name", as_index=False).agg({
-        "spend": "sum",
-        "impressions": "sum",
-        "clicks": "sum",
-        "purchases": "sum",
-        "purchase_value": "sum",
-        # Keep first value for non-numeric fields
-        "campaign_name": "first",
-        "adset_name": "first",
-        "creative_type": "first",
-        "account_id": "first",
-    })
-
-    # Recalculate ROAS based on aggregated values
-    agg_df["roas"] = agg_df.apply(
-        lambda row: row["purchase_value"] / row["spend"] if row["spend"] > 0 else 0,
-        axis=1
-    )
-
-    # Recalculate CPA
-    agg_df["cpa"] = agg_df.apply(
-        lambda row: row["spend"] / row["purchases"] if row["purchases"] > 0 else 0,
-        axis=1
-    )
-
-    return agg_df
-
-
-def calculate_monthly_stats(df: pd.DataFrame, min_spend: float = 1000, min_roas: float = 2.0):
-    """Calculate monthly statistics based on unique creatives.
-
-    Key logic:
-    - Aggregate all ads by creative name first
-    - Count unique creatives launched
-    - Winners = creatives with ≥min_spend AND ≥min_roas
-    - Win rate = winners / total unique creatives (how many we launch that hit KPIs)
-    """
-    if df.empty:
-        return {
-            "total_ads": 0,
-            "unique_creatives": 0,
-            "winners": 0,
-            "win_rate": 0,
-            "total_spend": 0,
-            "avg_roas": 0,
-        }
-
-    # Aggregate by unique creative name
-    creative_df = aggregate_by_creative(df)
-
-    # Count unique creatives launched
-    unique_creatives = len(creative_df)
-
-    # Winners = creatives that hit BOTH KPIs (≥min_spend AND ≥min_roas)
-    winners = creative_df[(creative_df["spend"] >= min_spend) & (creative_df["roas"] >= min_roas)]
-
-    # Win rate = winners / total creatives launched
-    # This shows: of all creatives we launch, how many hit our KPIs
-    win_rate = (len(winners) / unique_creatives * 100) if unique_creatives > 0 else 0
-
-    return {
-        "total_ads": len(df),  # Raw ad count
-        "unique_creatives": unique_creatives,  # Unique creative count
-        "winners": len(winners),
-        "win_rate": win_rate,
-        "total_spend": creative_df["spend"].sum(),
-        "avg_roas": creative_df["purchase_value"].sum() / creative_df["spend"].sum() if creative_df["spend"].sum() > 0 else 0,
-    }
-
-
-def render_overview_card(label: str, value: str, subtitle: str = "", change: float = None, change_label: str = ""):
-    """Render an overview card with white background."""
-    change_html = ""
-    if change is not None:
-        if change > 0:
-            change_html = f'<span class="overview-change change-positive">↑ +{change:.1f}%</span>'
-        elif change < 0:
-            change_html = f'<span class="overview-change change-negative">↓ {change:.1f}%</span>'
+        # ROAS varies - correlation with spend (more spend = more stable ROAS)
+        base_roas = np.random.lognormal(mean=0.7, sigma=0.5)
+        if spend < 500:
+            roas_multiplier = np.random.uniform(0.5, 2.0)  # High variance for low spend
         else:
-            change_html = f'<span class="overview-change change-neutral">— 0%</span>'
+            roas_multiplier = np.random.uniform(0.8, 1.3)  # Lower variance for high spend
+        roas = base_roas * roas_multiplier
+        roas = min(max(roas, 0.2), 8.0)  # Clamp ROAS
+
+        revenue = spend * roas
+
+        # Calculate other metrics
+        impressions = int(spend * np.random.uniform(40, 120))
+        clicks = int(impressions * np.random.uniform(0.005, 0.04))  # 0.5-4% CTR
+
+        # Hook rate and hold rate (video metrics)
+        hook_rate = np.random.uniform(0.20, 0.60)  # 3-second view rate
+        hold_rate = np.random.uniform(0.05, 0.30)  # Video completion rate
+
+        # Status - more active ads than paused
+        status = "Active" if random.random() > 0.25 else "Paused"
+
+        # For recent spend (last 7 days) - used for fatigue detection
+        recent_roas = roas * np.random.uniform(0.5, 1.2)  # Could be worse or same
+
+        data.append({
+            "ad_name": ad_name,
+            "buyer_initials": buyer,
+            "concept": concept,
+            "format": fmt,
+            "spend": round(spend, 2),
+            "revenue": round(revenue, 2),
+            "roas": round(roas, 2),
+            "impressions": impressions,
+            "clicks": clicks,
+            "hook_rate": round(hook_rate, 3),
+            "hold_rate": round(hold_rate, 3),
+            "status": status,
+            "creative_thumbnail": "https://placehold.co/100",
+            "launch_date": datetime.now() - timedelta(days=random.randint(0, 90)),
+            "recent_roas_7d": round(recent_roas, 2),
+        })
+
+    return pd.DataFrame(data)
+
+
+def generate_daily_trend_data(num_days: int = 30) -> pd.DataFrame:
+    """Generate daily trend data for sparklines."""
+    dates = pd.date_range(end=datetime.now(), periods=num_days, freq='D')
+
+    # Base values with some trend
+    base_spend = 5000
+    base_roas = 2.2
+    base_winners = 8
+    base_win_rate = 3.5
+
+    data = []
+    for i, date in enumerate(dates):
+        # Add some trend and noise
+        trend_factor = 1 + (i / num_days) * 0.15  # Slight upward trend
+        noise = np.random.uniform(0.85, 1.15)
+
+        spend = base_spend * trend_factor * noise
+        roas = base_roas * (1 + np.random.uniform(-0.15, 0.2))
+        winners = int(base_winners * trend_factor * np.random.uniform(0.8, 1.3))
+        win_rate = base_win_rate * (1 + np.random.uniform(-0.2, 0.25))
+
+        data.append({
+            "date": date,
+            "spend": round(spend, 2),
+            "roas": round(roas, 2),
+            "winners": winners,
+            "win_rate": round(win_rate, 2),
+        })
+
+    return pd.DataFrame(data)
+
+
+def create_sparkline(data: list, color: str = "#3b82f6", height: int = 40) -> go.Figure:
+    """Create a minimal sparkline chart."""
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        y=data,
+        mode='lines',
+        line=dict(color=color, width=2),
+        fill='tozeroy',
+        fillcolor=f'rgba({int(color[1:3], 16)}, {int(color[3:5], 16)}, {int(color[5:7], 16)}, 0.1)',
+        hoverinfo='skip',
+    ))
+
+    fig.update_layout(
+        height=height,
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        showlegend=False,
+    )
+
+    return fig
+
+
+def render_metric_with_sparkline(label: str, value: str, trend_data: list, trend_pct: float, color: str = "#3b82f6"):
+    """Render a metric card with sparkline."""
+    trend_class = "trend-up" if trend_pct >= 0 else "trend-down"
+    trend_icon = "↑" if trend_pct >= 0 else "↓"
 
     st.markdown(f"""
-    <div class="overview-card">
-        <div class="overview-label">{label}</div>
-        <div class="overview-value">{value}</div>
-        <div class="overview-subtitle">{subtitle} {change_html}</div>
+    <div class="metric-card">
+        <div class="metric-label">{label}</div>
+        <div class="metric-value">{value}</div>
+        <div class="metric-trend {trend_class}">{trend_icon} {abs(trend_pct):.1f}% vs last period</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Sparkline
+    fig = create_sparkline(trend_data, color)
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+
+def render_podium(df: pd.DataFrame):
+    """Render the Top Gun podium for media buyers."""
+    st.markdown('<div class="section-header">🏆 Top Gun Leaderboard</div>', unsafe_allow_html=True)
+
+    # Calculate buyer performance - rank by total spend where ROAS > 2.0
+    winning_ads = df[df["roas"] > 2.0].copy()
+
+    if winning_ads.empty:
+        st.info("No qualifying ads found (ROAS > 2.0)")
+        return
+
+    buyer_stats = winning_ads.groupby("buyer_initials").agg({
+        "spend": "sum",
+        "revenue": "sum",
+        "ad_name": "count"
+    }).reset_index()
+
+    buyer_stats["roas"] = buyer_stats["revenue"] / buyer_stats["spend"]
+    buyer_stats = buyer_stats.sort_values("spend", ascending=False).head(3)
+
+    if len(buyer_stats) < 3:
+        st.warning("Need at least 3 buyers with qualifying ads")
+        return
+
+    # Podium layout: 2nd | 1st | 3rd
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+
+    # 2nd Place (Silver) - Left
+    with col1:
+        buyer = buyer_stats.iloc[1]
+        st.markdown(f"""
+        <div class="podium-card podium-silver" style="margin-top: 40px;">
+            <div class="podium-rank">2</div>
+            <div class="podium-name">{buyer['buyer_initials']}</div>
+            <div class="podium-stat">Total Spend</div>
+            <div class="podium-value">${buyer['spend']:,.0f}</div>
+            <div class="podium-stat">ROAS</div>
+            <div class="podium-value">{buyer['roas']:.2f}x</div>
+            <div class="podium-stat">Winning Ads</div>
+            <div class="podium-value">{buyer['ad_name']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 1st Place (Gold) - Center
+    with col2:
+        buyer = buyer_stats.iloc[0]
+        st.markdown(f"""
+        <div class="podium-card podium-gold">
+            <div class="podium-rank">1</div>
+            <div class="podium-name">{buyer['buyer_initials']}</div>
+            <div class="podium-stat">Total Spend</div>
+            <div class="podium-value">${buyer['spend']:,.0f}</div>
+            <div class="podium-stat">ROAS</div>
+            <div class="podium-value">{buyer['roas']:.2f}x</div>
+            <div class="podium-stat">Winning Ads</div>
+            <div class="podium-value">{buyer['ad_name']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 3rd Place (Bronze) - Right
+    with col3:
+        buyer = buyer_stats.iloc[2]
+        st.markdown(f"""
+        <div class="podium-card podium-bronze" style="margin-top: 60px;">
+            <div class="podium-rank">3</div>
+            <div class="podium-name">{buyer['buyer_initials']}</div>
+            <div class="podium-stat">Total Spend</div>
+            <div class="podium-value">${buyer['spend']:,.0f}</div>
+            <div class="podium-stat">ROAS</div>
+            <div class="podium-value">{buyer['roas']:.2f}x</div>
+            <div class="podium-stat">Winning Ads</div>
+            <div class="podium-value">{buyer['ad_name']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def render_alerts(df: pd.DataFrame):
+    """Render Rising Stars (Incubator) and Fatigue Alerts."""
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown('<div class="section-header">🌟 Rising Stars (Scale Now)</div>', unsafe_allow_html=True)
+
+        # Rising Stars: <$1K spend but >4.0 ROAS
+        rising = df[(df["spend"] < 1000) & (df["roas"] > 4.0)].copy()
+        rising = rising.sort_values("roas", ascending=False).head(5)
+
+        if rising.empty:
+            st.info("No rising stars found (<$1K spend & >4.0 ROAS)")
+        else:
+            for _, ad in rising.iterrows():
+                st.markdown(f"""
+                <div class="alert-card alert-rising">
+                    <div class="alert-title">{ad['ad_name'][:50]}...</div>
+                    <div class="alert-subtitle">
+                        Spend: ${ad['spend']:,.0f} | ROAS: {ad['roas']:.2f}x | Status: {ad['status']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown('<div class="section-header">⚠️ Fatigue Alert (Kill These)</div>', unsafe_allow_html=True)
+
+        # Fatigue: >$5K lifetime spend but <1.5 ROAS in last 7 days
+        fatigue = df[(df["spend"] > 5000) & (df["recent_roas_7d"] < 1.5)].copy()
+        fatigue = fatigue.sort_values("spend", ascending=False).head(5)
+
+        if fatigue.empty:
+            st.success("No fatigued ads detected!")
+        else:
+            for _, ad in fatigue.iterrows():
+                st.markdown(f"""
+                <div class="alert-card alert-fatigue">
+                    <div class="alert-title">{ad['ad_name'][:50]}...</div>
+                    <div class="alert-subtitle">
+                        Lifetime: ${ad['spend']:,.0f} | 7d ROAS: {ad['recent_roas_7d']:.2f}x | Losing ${(ad['spend'] * (1 - ad['recent_roas_7d'])):.0f}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+
+def render_scatter_analysis(df: pd.DataFrame):
+    """Render scatter plot for hook rate vs hold rate analysis."""
+    st.markdown('<div class="section-header">📊 Creative Performance Matrix</div>', unsafe_allow_html=True)
+
+    # Filter for meaningful data
+    plot_df = df[df["impressions"] > 1000].copy()
+
+    if plot_df.empty:
+        st.warning("Not enough data for scatter analysis")
+        return
+
+    # Create scatter plot
+    fig = px.scatter(
+        plot_df,
+        x="hook_rate",
+        y="hold_rate",
+        color="roas",
+        size="spend",
+        hover_name="ad_name",
+        hover_data={
+            "hook_rate": ":.1%",
+            "hold_rate": ":.1%",
+            "roas": ":.2f",
+            "spend": ":$,.0f",
+        },
+        color_continuous_scale=["#ef4444", "#f59e0b", "#22c55e"],  # Red to Yellow to Green
+        labels={
+            "hook_rate": "Hook Rate (3s Views / Impressions)",
+            "hold_rate": "Hold Rate (Completions / Views)",
+            "roas": "ROAS",
+            "spend": "Spend ($)",
+        },
+    )
+
+    # Add quadrant labels
+    fig.add_annotation(x=0.25, y=0.25, text="💤 Boring Intro<br>Low Hook / Low Hold",
+                       showarrow=False, font=dict(color="#8b8fa3", size=10))
+    fig.add_annotation(x=0.55, y=0.25, text="🎣 Clickbait<br>High Hook / Low Hold",
+                       showarrow=False, font=dict(color="#8b8fa3", size=10))
+    fig.add_annotation(x=0.25, y=0.25, text="📚 Slow Burn<br>Low Hook / High Hold",
+                       showarrow=False, font=dict(color="#8b8fa3", size=10), yshift=80)
+    fig.add_annotation(x=0.55, y=0.25, text="🏆 Winner Zone<br>High Hook / High Hold",
+                       showarrow=False, font=dict(color="#22c55e", size=10), yshift=80)
+
+    # Add reference lines
+    fig.add_hline(y=0.15, line_dash="dash", line_color="#4b5563", opacity=0.5)
+    fig.add_vline(x=0.40, line_dash="dash", line_color="#4b5563", opacity=0.5)
+
+    fig.update_layout(
+        height=500,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(26,29,41,0.8)',
+        font=dict(color="#fafafa"),
+        xaxis=dict(
+            gridcolor='rgba(75,85,99,0.3)',
+            tickformat='.0%',
+            range=[0.15, 0.65],
+        ),
+        yaxis=dict(
+            gridcolor='rgba(75,85,99,0.3)',
+            tickformat='.0%',
+            range=[0, 0.35],
+        ),
+        coloraxis_colorbar=dict(
+            title="ROAS",
+            tickformat=".1f",
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Add legend
+    st.markdown("""
+    <div style="display: flex; gap: 24px; justify-content: center; margin-top: -20px; margin-bottom: 20px;">
+        <span style="color: #8b8fa3; font-size: 12px;">🔴 Low ROAS (<1.5)</span>
+        <span style="color: #8b8fa3; font-size: 12px;">🟡 Medium ROAS (1.5-3.0)</span>
+        <span style="color: #8b8fa3; font-size: 12px;">🟢 High ROAS (>3.0)</span>
+        <span style="color: #8b8fa3; font-size: 12px;">⬤ Bubble Size = Spend</span>
     </div>
     """, unsafe_allow_html=True)
 
 
-def render_header_bar():
-    """Render the top header bar with controls."""
-    col1, col2, col3, col4, col5, col6 = st.columns([2, 1.2, 1, 1, 1, 0.8])
+def render_winners_gallery(df: pd.DataFrame):
+    """Render the winners gallery with thumbnails."""
+    st.markdown('<div class="section-header">🏅 Winners Gallery</div>', unsafe_allow_html=True)
 
-    with col1:
-        st.markdown("## Win Rate Tracker")
-
-    with col2:
-        # Account selector
-        available_accounts = get_available_ad_accounts()
-        account_options = ["All Accounts"] + available_accounts
-        selected = st.selectbox(
-            "Account",
-            options=account_options,
-            index=0,
-            key="account_dropdown",
-            label_visibility="collapsed"
-        )
-        st.session_state.selected_account = selected
-
-    with col3:
-        # Start date
-        start_date = st.date_input(
-            "Start",
-            value=datetime.now().replace(day=1),
-            key="start_date_input",
-            label_visibility="collapsed"
-        )
-
-    with col4:
-        # End date
-        end_date = st.date_input(
-            "End",
-            value=datetime.now(),
-            key="end_date_input",
-            label_visibility="collapsed"
-        )
-
-    with col5:
-        # Last refresh time
-        if st.session_state.last_refresh:
-            mins_ago = int((datetime.now() - st.session_state.last_refresh).seconds / 60)
-            st.markdown(f"<p style='color: #6b7280; font-size: 13px; margin-top: 8px;'>Last: {mins_ago}m ago</p>", unsafe_allow_html=True)
-        else:
-            st.markdown("<p style='color: #6b7280; font-size: 13px; margin-top: 8px;'>Not refreshed</p>", unsafe_allow_html=True)
-
-    with col6:
-        if st.button("Refresh", type="primary", use_container_width=True):
-            st.cache_data.clear()
-            st.session_state.data = None
-            st.session_state.insights = None
-            st.session_state.last_refresh = datetime.now()
-            st.rerun()
-
-    # Store dates in session state
-    st.session_state.date_start = datetime.combine(start_date, datetime.min.time())
-    st.session_state.date_end = datetime.combine(end_date, datetime.max.time())
-
-    # Fixed ROAS threshold at 2.0
-    return 2.0
-
-
-def render_overview_section(df: pd.DataFrame, insights: dict, min_roas: float = 2.0):
-    """Render the Overview section with monthly stats and MoM comparison."""
-
-    # Current month stats - based on unique creatives
-    current_stats = calculate_monthly_stats(df, min_spend=1000, min_roas=min_roas)
-
-    # For demo purposes, simulate previous month data (in real app, fetch separately)
-    prev_stats = {
-        "unique_creatives": int(current_stats["unique_creatives"] * 0.85),
-        "winners": int(current_stats["winners"] * 0.8),
-        "win_rate": current_stats["win_rate"] * 0.95,
-    }
-
-    # Calculate MoM changes
-    def calc_change(current, previous):
-        if previous == 0:
-            return 0
-        return ((current - previous) / previous) * 100
-
-    creatives_change = calc_change(current_stats["unique_creatives"], prev_stats["unique_creatives"])
-    winners_change = calc_change(current_stats["winners"], prev_stats["winners"])
-    winrate_change = calc_change(current_stats["win_rate"], prev_stats["win_rate"])
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        render_overview_card(
-            "UNIQUE CREATIVES",
-            f"{current_stats['unique_creatives']:,}",
-            "Distinct ad names",
-            creatives_change
-        )
-
-    with col2:
-        render_overview_card(
-            "TOTAL WINNERS",
-            f"{current_stats['winners']}",
-            f"≥$1K spend & ≥{min_roas} ROAS",
-            winners_change
-        )
-
-    with col3:
-        render_overview_card(
-            "WIN RATE",
-            f"{current_stats['win_rate']:.1f}%",
-            f"{current_stats['winners']}/{current_stats['unique_creatives']} creatives",
-            winrate_change
-        )
-
-    with col4:
-        render_overview_card(
-            "BLENDED ROAS",
-            f"{current_stats['avg_roas']:.2f}",
-            "All accounts"
-        )
-
-
-def render_monthly_breakdown(df: pd.DataFrame, min_roas: float = 2.0, use_demo: bool = False):
-    """Render monthly breakdown table with real historical data."""
-    st.markdown("### Monthly Performance")
-
-    if use_demo:
-        # For demo mode, just show current data
-        if df.empty:
-            st.info("No data available")
-            return
-
-        creative_df = aggregate_by_creative(df)
-        unique_creatives = len(creative_df)
-        total_spend = creative_df["spend"].sum()
-        total_revenue = creative_df["purchase_value"].sum()
-        winners = creative_df[(creative_df["spend"] >= 1000) & (creative_df["roas"] >= min_roas)]
-        num_winners = len(winners)
-        win_rate = (num_winners / unique_creatives * 100) if unique_creatives > 0 else 0
-        blended_roas = total_revenue / total_spend if total_spend > 0 else 0
-
-        months_data = [{
-            "Month": datetime.now().strftime("%B %Y"),
-            "Creatives": unique_creatives,
-            "Total Spend": format_currency(total_spend),
-            "Winners": num_winners,
-            "Win Rate": f"{win_rate:.1f}%",
-            "Blended ROAS": f"{blended_roas:.2f}",
-        }]
-        monthly_df = pd.DataFrame(months_data)
-        st.dataframe(monthly_df, use_container_width=True, hide_index=True)
-        return
-
-    # Fetch real historical data for last 6 months
-    with st.spinner("Loading historical monthly data..."):
-        try:
-            monthly_data = load_monthly_historical_data(num_months=6)
-        except Exception as e:
-            st.error(f"Error loading historical data: {e}")
-            return
-
-    if not monthly_data:
-        st.info("No historical data available")
-        return
-
-    months_data = []
-
-    for month_name, month_df in monthly_data.items():
-        if month_df.empty:
-            months_data.append({
-                "Month": month_name,
-                "Creatives": 0,
-                "Total Spend": "$0",
-                "Winners": 0,
-                "Win Rate": "0.0%",
-                "Blended ROAS": "0.00",
-            })
-            continue
-
-        # Aggregate by unique creative for this month
-        creative_df = aggregate_by_creative(month_df)
-
-        unique_creatives = len(creative_df)
-        total_spend = creative_df["spend"].sum()
-        total_revenue = creative_df["purchase_value"].sum()
-
-        # Winners = creatives that hit BOTH KPIs
-        winners = creative_df[(creative_df["spend"] >= 1000) & (creative_df["roas"] >= min_roas)]
-        num_winners = len(winners)
-
-        # Win rate = winners / total creatives
-        win_rate = (num_winners / unique_creatives * 100) if unique_creatives > 0 else 0
-
-        # Blended ROAS
-        blended_roas = total_revenue / total_spend if total_spend > 0 else 0
-
-        months_data.append({
-            "Month": month_name,
-            "Creatives": unique_creatives,
-            "Total Spend": format_currency(total_spend),
-            "Winners": num_winners,
-            "Win Rate": f"{win_rate:.1f}%",
-            "Blended ROAS": f"{blended_roas:.2f}",
-        })
-
-    monthly_df = pd.DataFrame(months_data)
-    st.dataframe(monthly_df, use_container_width=True, hide_index=True)
-
-
-def render_format_breakdown(df: pd.DataFrame, min_roas: float = 2.0):
-    """Render format breakdown with win rates based on unique creatives."""
-    if df.empty:
-        st.info("No data available")
-        return
-
-    # First aggregate by unique creative
-    creative_df = aggregate_by_creative(df)
-
-    def get_format(row):
-        name = str(row.get("ad_name", "")).upper()
-        creative_type = str(row.get("creative_type", "")).upper()
-
-        if "VIDEO" in creative_type or "VID" in name:
-            return "Video"
-        elif "CAROUSEL" in name or "CAR" in name:
-            return "Carousel"
-        else:
-            return "Image"
-
-    creative_df["format"] = creative_df.apply(get_format, axis=1)
-
-    # Calculate stats per format based on unique creatives
-    formats = []
-    for fmt in creative_df["format"].unique():
-        fmt_df = creative_df[creative_df["format"] == fmt]
-        # Winners = creatives with ≥$1K spend AND ≥min_roas
-        winners = fmt_df[(fmt_df["spend"] >= 1000) & (fmt_df["roas"] >= min_roas)]
-        # Win rate = winners / total creatives in this format
-        win_rate = (len(winners) / len(fmt_df) * 100) if len(fmt_df) > 0 else 0
-
-        formats.append({
-            "Name": fmt,
-            "Creatives": len(fmt_df),
-            "Winners": len(winners),
-            "Win Rate": f"{win_rate:.1f}%",
-            "Spend": format_currency(fmt_df["spend"].sum()),
-            "ROAS": f"{fmt_df['purchase_value'].sum() / fmt_df['spend'].sum() if fmt_df['spend'].sum() > 0 else 0:.2f}",
-        })
-
-    format_df = pd.DataFrame(formats).sort_values("Spend", ascending=False, key=lambda x: x.str.replace('$', '').str.replace(',', '').str.replace('K', '000').astype(float))
-    st.dataframe(format_df, use_container_width=True, hide_index=True)
-
-
-def render_winners_table(df: pd.DataFrame, min_roas: float = 2.0):
-    """Render winning creatives table based on aggregated unique creatives."""
-    if df.empty:
-        st.info("No data available")
-        return
-
-    # Aggregate by unique creative first
-    creative_df = aggregate_by_creative(df)
-
-    # Filter for winners (based on aggregated metrics)
-    qualified = creative_df[creative_df["spend"] >= 1000]
-    winners = qualified[qualified["roas"] >= min_roas].copy()
-
-    if winners.empty:
-        st.info(f"No winners found (≥$1K spend & ≥{min_roas} ROAS)")
-        return
-
+    # Filter for winners (>$1K spend, >2.0 ROAS)
+    winners = df[(df["spend"] >= 1000) & (df["roas"] >= 2.0)].copy()
     winners = winners.sort_values("roas", ascending=False)
 
-    display_df = winners[["ad_name", "spend", "roas", "purchases", "purchase_value"]].head(20).copy()
-    display_df.columns = ["Creative Name", "Spend", "ROAS", "Purchases", "Revenue"]
-    display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
-    display_df["Revenue"] = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
-    display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
-
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
-
-
-def render_losers_table(df: pd.DataFrame, min_roas: float = 2.0):
-    """Render underperforming creatives table based on aggregated unique creatives."""
-    if df.empty:
-        st.info("No data available")
+    if winners.empty:
+        st.info("No winners found (≥$1K spend & ≥2.0 ROAS)")
         return
 
-    # Aggregate by unique creative first
-    creative_df = aggregate_by_creative(df)
+    # Group by options
+    group_by = st.radio(
+        "Group by:",
+        ["None", "Concept", "Format", "Media Buyer"],
+        horizontal=True,
+        key="winners_group"
+    )
 
-    # Filter for losers (high spend, low ROAS)
-    qualified = creative_df[creative_df["spend"] >= 1000]
-    losers = qualified[qualified["roas"] < min_roas].copy()
+    if group_by == "None":
+        display_df = winners[["ad_name", "creative_thumbnail", "spend", "roas", "concept", "format"]].head(20)
+        display_df.columns = ["Ad Name", "Thumbnail", "Spend", "ROAS", "Concept", "Format"]
 
-    if losers.empty:
-        st.success("No underperforming creatives found!")
-        return
+        st.dataframe(
+            display_df,
+            column_config={
+                "Thumbnail": st.column_config.ImageColumn("Preview", width="small"),
+                "Spend": st.column_config.NumberColumn("Spend", format="$%.2f"),
+                "ROAS": st.column_config.NumberColumn("ROAS", format="%.2fx"),
+            },
+            use_container_width=True,
+            hide_index=True,
+            height=500,
+        )
+    else:
+        group_col = {
+            "Concept": "concept",
+            "Format": "format",
+            "Media Buyer": "buyer_initials"
+        }[group_by]
 
-    losers = losers.sort_values("spend", ascending=False)
+        # Group summary
+        grouped = winners.groupby(group_col).agg({
+            "ad_name": "count",
+            "spend": "sum",
+            "revenue": "sum",
+        }).reset_index()
+        grouped["roas"] = grouped["revenue"] / grouped["spend"]
+        grouped.columns = [group_by, "Winners", "Total Spend", "Total Revenue", "Avg ROAS"]
+        grouped = grouped.sort_values("Total Spend", ascending=False)
 
-    display_df = losers[["ad_name", "spend", "roas", "purchases", "purchase_value"]].head(20).copy()
-    display_df.columns = ["Creative Name", "Spend", "ROAS", "Purchases", "Revenue"]
-    display_df["Spend"] = display_df["Spend"].apply(lambda x: f"${x:,.2f}")
-    display_df["Revenue"] = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
-    display_df["ROAS"] = display_df["ROAS"].apply(lambda x: f"{x:.2f}")
-
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=300)
-
-
-def render_team_section():
-    """Render team sharing section in sidebar."""
-    st.markdown("### Share Dashboard")
-    st.caption("Share this URL with your team:")
-    st.code("https://your-app.streamlit.app", language=None)
-    st.caption("Anyone with the link can view this dashboard.")
+        st.dataframe(
+            grouped,
+            column_config={
+                "Total Spend": st.column_config.NumberColumn(format="$%.2f"),
+                "Total Revenue": st.column_config.NumberColumn(format="$%.2f"),
+                "Avg ROAS": st.column_config.NumberColumn(format="%.2fx"),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def main():
     """Main application."""
-    init_session_state()
+    # Header
+    st.markdown("# 🎯 Win Rate Tracker V2")
+    st.markdown("*Media Buying Analytics Dashboard with Gamification*")
 
-    # Sidebar for team management
-    with st.sidebar:
-        render_team_section()
+    # Generate data
+    df = generate_dummy_data(500)
+    trend_df = generate_daily_trend_data(30)
 
-    # Header bar with controls (includes date range)
-    min_roas = render_header_bar()
+    # Calculate key metrics
+    total_spend = df["spend"].sum()
+    total_revenue = df["revenue"].sum()
+    blended_roas = total_revenue / total_spend if total_spend > 0 else 0
 
-    # Get dates from session state (set by header bar)
-    date_start = st.session_state.get("date_start", datetime.now().replace(day=1))
-    date_end = st.session_state.get("date_end", datetime.now())
+    # Winners = creatives with ≥$1K spend AND ≥2.0 ROAS
+    winners = df[(df["spend"] >= 1000) & (df["roas"] >= 2.0)]
+    total_winners = len(winners)
 
-    # Load data
-    if st.session_state.data is None or st.session_state.insights is None:
-        with st.spinner("Loading data..."):
-            try:
-                date_start_str = date_start.strftime("%Y-%m-%d")
-                date_end_str = date_end.strftime("%Y-%m-%d")
-                st.session_state.data, st.session_state.insights = load_cached_data(
-                    date_start_str, date_end_str, False  # No demo mode
-                )
-                st.session_state.last_refresh = datetime.now()
-            except Exception as e:
-                st.error(f"Error loading data: {e}")
-                st.session_state.data = pd.DataFrame()
-                st.session_state.insights = {}
-
-    df = st.session_state.data
-    insights = st.session_state.insights
-
-    if df is None or df.empty:
-        st.warning("No data available. Check your Meta API credentials.")
-        return
-
-    # Filter by selected account
-    if st.session_state.selected_account != "All Accounts" and "account_id" in df.columns:
-        df = df[df["account_id"] == st.session_state.selected_account]
-
-    # Overview section
-    st.markdown("### Overview")
-    render_overview_section(df, insights, min_roas)
+    # Win rate = winners / total creatives
+    total_creatives = len(df)
+    win_rate = (total_winners / total_creatives * 100) if total_creatives > 0 else 0
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Tabs for breakdowns
-    tab1, tab2, tab3, tab4 = st.tabs(["Format", "Monthly", "🏆 Winners", "⚠️ Underperformers"])
+    # SECTION A: High-Level Metrics with Sparklines
+    st.markdown('<div class="section-header">📈 The Pulse</div>', unsafe_allow_html=True)
 
-    with tab1:
-        render_format_breakdown(df, min_roas)
+    col1, col2, col3, col4 = st.columns(4)
 
-    with tab2:
-        render_monthly_breakdown(df, min_roas, use_demo=False)
+    with col1:
+        render_metric_with_sparkline(
+            "Total Spend",
+            f"${total_spend:,.0f}",
+            trend_df["spend"].tolist(),
+            12.5,
+            "#3b82f6"
+        )
 
-    with tab3:
-        render_winners_table(df, min_roas)
+    with col2:
+        render_metric_with_sparkline(
+            "Win Rate",
+            f"{win_rate:.1f}%",
+            trend_df["win_rate"].tolist(),
+            8.3,
+            "#22c55e"
+        )
 
-    with tab4:
-        render_losers_table(df, min_roas)
+    with col3:
+        render_metric_with_sparkline(
+            "Total Winners",
+            f"{total_winners}",
+            trend_df["winners"].tolist(),
+            15.2,
+            "#f59e0b"
+        )
+
+    with col4:
+        render_metric_with_sparkline(
+            "Blended ROAS",
+            f"{blended_roas:.2f}x",
+            trend_df["roas"].tolist(),
+            -2.1,
+            "#8b5cf6"
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # SECTION B: Top Gun Podium
+    render_podium(df)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # SECTION C: Alerts (Rising Stars & Fatigue)
+    render_alerts(df)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # SECTION D: Scatter Plot Analysis
+    render_scatter_analysis(df)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # SECTION E: Winners Gallery
+    render_winners_gallery(df)
 
 
 if __name__ == "__main__":
